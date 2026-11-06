@@ -1,0 +1,21 @@
+[project]
+name = "game-tron-redes"
+version = "0.1.0"
+description = "Jogo Tron P2P com protocolo próprio"
+authors = [
+    {name = "Guilherme Tegnoue",email = "tegnoue@outlook.com"}
+]
+requires-python = ">=3.14"
+dependencies = [
+    "python-dotenv (>=1.2.4,<2.0.0)"
+]
+
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[dependency-groups]
+dev = [
+    "rich (>=15.0.0,<16.0.0)"
+]
