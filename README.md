@@ -1,6 +1,6 @@
 # Game Tron Redes
 
-Projeto de Redes de Computadores do curso de Engenharia de Software da UnB. O objetivo é a especificação e implementação de um protocolo de aplicação customizado para um jogo Tron multijogador em tempo real. 
+O objetivo do projeto é a especificação e implementação de um protocolo de aplicação customizado para um jogo Tron multijogador em tempo real. 
 
 A solução utiliza uma arquitetura híbrida construída inteiramente com *sockets* TCP puros em Python. Um servidor centralizado atua como Lobby para descoberta de jogadores, enquanto as partidas ocorrem numa malha Peer-to-Peer (P2P) com um par autoritário. O sistema garante consistência de estado e tolerância a falhas através da migração determinística de host em caso de desconexão.
 
