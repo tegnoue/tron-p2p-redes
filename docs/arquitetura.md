@@ -296,17 +296,3 @@ O usuário escolhe retornar ao lobby ou sair. A escolha pode ser feita enquanto 
 Moto viva/eliminada, líder/seguidor/candidato e votante/observador são dimensões independentes.
 
 Receber uma época maior ou perder sincronização leva a SINCRONIZANDO. A próxima apresentação de movimento só ocorre após a sequência de recuperação e retomada.
-
-## 17. O que demonstrar na apresentação
-
-- Por que sockets TCP não eliminam a necessidade de framing e timeout.
-- Como duas curvas são enfileiradas sem permitir inversão instantânea.
-- Por que colisões são calculadas simultaneamente.
-- Diferença entre comando, ciclo, registro, posição e época.
-- Como armazenamento, confirmação e aplicação são separados.
-- Por que ranking não substitui votação.
-- Como recuperar um ciclo cuja confirmação chegou só a parte dos jogadores.
-- Como sair sem deixar dois hosts e por que maioria não pode ser reduzida localmente.
-- Qual cenário não consegue continuar por falta de quorum.
-
-Use os roteiros e critérios de [implementacao.md](implementacao.md). A especificação orienta a construção; as garantias precisam ser verificadas nos testes da implementação.
