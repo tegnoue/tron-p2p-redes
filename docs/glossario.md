@@ -186,6 +186,6 @@ Histórico:
 
 **Log de diagnóstico:** texto sobre mensagens, tempos e transições para investigar problemas. Não é o histórico autoritativo replicado.
 
-## 6. Como explicar em um minuto
+## 6. Explicando em um minuto
 
 “O jogador pede uma curva. O host decide em qual ciclo ela cabe, calcula todos os movimentos juntos e cria um registro. Os pares armazenam esse registro e respondem. Depois de obter o quorum, ele é confirmado e aplicado. Se o host falhar, a época muda, outro candidato precisa de votos e um histórico atualizado, e os registros são reconciliados. O estado confirmado é instalado antes da contagem de três segundos; o teclado abre apenas nos últimos 500 ms.”
