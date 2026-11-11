@@ -10,7 +10,7 @@ Use este arquivo como consulta. Os nomes dos campos do protocolo aparecem ao lad
 | Ciclo | Um passo de movimento do jogo | No ciclo 43, cada moto viva anda uma célula |
 | Registro | Entrada que descreve uma decisão compartilhada | Resultado do ciclo 43 ou retirada de um votante |
 | Posição no histórico, index | Número global de um registro | Registro 58 pode conter movimentos de vários jogadores |
-| Época, epoch | Número de uma tentativa de liderança | A liderou na época 1; B tenta a 2 |
+| Época | Número de uma tentativa de liderança | A liderou na época 1; B tenta a 2 |
 
 Não são três nomes para um contador.
 
