@@ -1,503 +1,312 @@
-# Arquitetura do sistema — Tron P2P
+# Arquitetura do Tron P2P
 
-## 1. Objetivo e situação do documento
+## 1. O que o sistema faz
 
-Este documento consolida as decisões de arquitetura de um jogo Tron multijogador para a disciplina de Redes.
+Cada jogador controla uma moto que avança uma célula por ciclo em uma arena retangular. As células percorridas viram obstáculos permanentes. Colisões eliminam motos; vence a última sobrevivente. Se as últimas forem eliminadas juntas, há empate.
 
-A solução utiliza lobby centralizado para descoberta e comunicação direta entre os jogadores durante a partida, com um participante atuando como host autoritário.
+O lobby registra jogadores e organiza salas. Depois da preparação, os próprios jogadores executam a partida. Um deles é o **host**, responsável por calcular os ciclos. Os demais recebem os resultados, guardam cópias e confirmam o armazenamento.
 
-Este documento é uma base para implementação. Os formatos iniciais do lobby estão em protocolo.md. As mensagens P2P e os detalhes dos algoritmos distribuídos ainda precisam ser formalizados e testados.
+A proposta usa um protocolo específico para este jogo. Aproveita regras conhecidas de replicação e eleição, sem implementar todas as funcionalidades de Raft. Isso reduz o escopo, mas continua exigindo cuidado com épocas, votos, registros e mudanças dos votantes.
 
-As garantias descritas são objetivos da arquitetura; não representam uma implementação já validada.
+Leia [o glossário](glossario.md) quando encontrar um termo desconhecido. Os campos exatos e algoritmos estão em [protocolo.md](protocolo.md). [implementacao.md](implementacao.md) mostra como transformar o desenho em código.
 
-## 2. Requisitos e decisões principais
+## 2. Requisitos e limites
 
-| Tema | Decisão |
-|---|---|
-| Jogo | Tron em grade |
-| Participantes iniciais | Mínimo de três e máximo de quatro |
-| Execução | Um processo por jogador e processo independente para o lobby |
-| Rede | Máquinas diferentes da mesma rede |
-| Descoberta | Lobby centralizado |
-| Partida | Comunicação direta entre pares |
-| Topologia | Malha completa |
-| Autoridade | Um jogador atua como host |
-| Transporte | TCP com API de sockets |
-| Serialização | JSON em UTF-8, uma mensagem por linha |
-| Estado e histórico | Mantidos em memória |
-| Processo reiniciado | Não retorna à mesma partida |
-| Interface | Terminal |
-| Configuração | Endereços, portas e parâmetros configuráveis |
+- Uma partida começa com três ou quatro processos de jogadores.
+- O lobby é um processo separado; processos podem estar em máquinas da mesma rede.
+- Comunicação diretamente por sockets TCP; JSON e bibliotecas de terminal são auxiliares permitidas.
+- Endereços, portas e parâmetros são configuráveis.
+- A partida iniciada não depende do lobby.
+- Todos precisam concordar sobre movimentos oficiais, colisões e resultado.
+- A falha de um jogador comum elimina sua moto, quando for possível confirmar essa decisão.
+- A falha do host inicia eleição e recuperação; se não houver progresso seguro, ocorre encerramento controlado.
+- Nenhum jogador entra em uma partida já iniciada. Um processo reiniciado não retorna à mesma sessão.
+- Estado, votos e registros ficam em memória. Logs de diagnóstico podem ir para arquivos; não são recuperação persistente.
+- Os participantes seguem o protocolo. Autenticação criptográfica e resistência a jogadores que forjem votos não fazem parte desta versão.
+- A rede pode atrasar ou interromper conexões. Timeout representa suspeita, não prova de morte.
 
-A queda do lobby não pode interromper partidas iniciadas.
+### Segurança e continuidade são propriedades diferentes
 
-Bibliotecas auxiliares de terminal, JSON, configuração, hashes e logs podem ser utilizadas. A comunicação deve ser implementada diretamente com sockets.
+Segurança significa não confirmar resultados conflitantes. Continuidade significa conseguir avançar.
 
-O modelo discutido trata falhas e desconexões. Não foi definido um protocolo contra participantes maliciosos que forjem registros ou confirmações.
+Uma maioria de quatro exige três; uma de três exige dois; uma de dois exige ambos. Se restarem somente dois votantes e um cair, não é possível continuar confirmando pelo protocolo. O participante restante encerra de forma controlada, sem inventar vitória.
 
-## 3. Organização do projeto
+Essa é uma limitação concreta: a continuidade após qualquer sequência de desconexões não é garantida. Ela deve ser apresentada e confrontada com a exigência de continuidade do enunciado. O grupo deve demonstrar os cenários suportados e não afirmar tolerância ilimitada.
 
-### core/
+## 3. Componentes
 
-Configuração, tipos compartilhados, serialização, enquadramento das mensagens, validação estrutural e erros do protocolo.
+| Componente | Responsabilidade | Não deve fazer |
+|---|---|---|
+| core | Configuração, tipos, codec JSON, erros e identificadores | Calcular colisões |
+| lobby | Sessões, salas e preparação | Executar partidas |
+| game | Estado da arena e transição determinística | Abrir sockets ou ler teclado |
+| node/network | Conexões, buffers e entrega de eventos | Alterar a arena |
+| node/session | Estados, comandos, histórico, votos e liderança | Desenhar diretamente no terminal |
+| node/ui | Teclas e apresentação de uma cópia do estado | Decidir o resultado |
 
-### lobby/
+Um único laço de sessão é dono dos dados mutáveis do protocolo. Threads de rede e teclado entregam eventos por filas. Isso evita duas threads alterarem votos ou a arena simultaneamente.
 
-Registro de jogadores, criação e listagem de salas, entrada e saída, distribuição de endpoints, consolidação dos RTTs e preparação inicial.
+A divisão é uma orientação de organização: nomes de arquivos podem mudar, desde que as responsabilidades permaneçam separadas.
 
-Não executa ciclos nem arbitra colisões durante a partida.
+## 4. Rede e transporte
 
-### game/
+TCP entrega uma sequência de bytes ordenada por conexão. Não define mensagens nem prazo de entrega. Por isso cada JSON termina com LF e o receptor mantém um buffer.
 
-Motor isolado da rede.
+Uma conexão é bidirecional. O menor ID inicia a conexão com o maior. Há três conexões com três jogadores e seis com quatro. Todos abrem a porta P2P antes do registro no lobby.
 
-Recebe o estado e os comandos de um ciclo, calcula movimentos e colisões e devolve o resultado. Não abre sockets nem realiza eleições.
+Use TCP_NODELAY e envio da linha completa. Um socket lento tem sua própria fila; não bloqueia os demais nem o relógio da simulação.
 
-### node/
+O endpoint anunciado deve ser alcançável pelas outras máquinas. Não anunciar 0.0.0.0; esse endereço é de bind. A porta de escuta P2P é diferente da porta temporária usada ao conectar ao lobby.
 
-Aplicativo do jogador: teclado, interface, conexões, filas, estados, replicação, liderança, recuperação e encerramento.
+## 5. Preparação
 
-O mesmo aplicativo pode atuar como seguidor, candidato ou host.
+1. Abrir a porta P2P; registrar-se no lobby.
+2. Criar ou entrar em uma sala.
+3. O criador pede início com três ou quatro participantes.
+4. O lobby congela a lista e cria match_id e attempt_id novos.
+5. Os pares se conectam e medem RTT.
+6. Cada jogador envia as médias por destino. O lobby calcula a média de cada jogador até os demais, ordena e desempata por ID.
+7. O lobby distribui a mesma configuração completa e seu hash.
+8. Cada aplicativo envia READY automaticamente ao host inicial depois de preparar a arena.
+9. O host espera todos. Estabelece o primeiro registro de liderança e sincroniza a base.
+10. Conduz a contagem e inicia os ciclos.
 
-## 4. Comunicação entre pares
+O criador da sala não precisa ser o host. O ranking é fixado para a partida; orienta candidaturas futuras. Remoções não reordenam os sobreviventes.
 
-Cada jogador abre sua porta de escuta antes de anunciar seu endpoint.
+Se qualquer participante falhar antes do primeiro ciclo, cancela-se a tentativa e a sala permanece PREPARANDO. Mesmo com três restantes, o criador pede outra tentativa. Para permitir novas entradas, usa CANCEL_PREPARATION e reabre a sala.
 
-Para cada par, o menor ID inicia a conexão com o maior ID. Uma conexão TCP é bidirecional.
+Se o criador sair antes do início, assume o presente que entrou há mais tempo. Sala vazia é removida. Se o lobby cair antes de a partida estar efetivamente iniciada, a tentativa é cancelada.
 
-- Três participantes: três conexões.
-- Quatro participantes: seis conexões.
+## 6. Contagem: três segundos no total
 
-Todos aceitam conexões na preparação, independentemente de quem será o host.
+As filas antigas são limpas antes da preparação para o movimento.
 
-A porta usada para conectar ao lobby não é a porta de escuta P2P. Endereço de bind e endereço anunciado aos pares podem ser configurações diferentes.
+| Tempo no host | Teclado | Motos |
+|---|---|---|
+| De 0 até 2,5 s | Entradas ignoradas | Paradas |
+| De 2,5 até 3 s | Até dois comandos pendentes | Paradas |
+| A partir de 3 s | Entrada normal | Ciclos normais |
 
-## 5. Ranking inicial
+A janela de entrada são os **últimos 500 ms da contagem**, não uma etapa adicional. Os comandos nela aceitos são preservados.
 
-Após estabelecer a malha, os jogadores medem o RTT até os demais usando mensagens de aplicação e relógio monotônico local.
+O host controla os instantes por relógio monotônico e anuncia as fases. Não se presume sincronização perfeita dos relógios das máquinas. Um cliente libera o teclado quando recebe INPUT_OPEN. O atraso de rede reduz sua janela observada; essa diferença será medida, não escondida.
 
-Cada jogador envia suas medições ao lobby. O lobby consolida um ranking pela média de RTT de cada participante até os outros, com desempate por ID.
+## 7. Comandos
 
-A quantidade de amostras é configurável e ainda precisa de um valor inicial.
+### Validação imediata
 
-O ranking:
+O cliente compara a tecla com a última direção aceita pendente. Se não houver pendências, usa a direção oficial.
 
-- É compartilhado e consolidado antes da partida.
-- Orienta a preferência de candidatura.
-- Não autoriza assumir a liderança sozinho.
-- Não substitui a verificação do histórico e a obtenção de maioria.
+- Mesma direção: ignorar.
+- Oposta: rejeitar localmente.
+- Perpendicular: aceitar se houver espaço.
+- Fila cheia: ignorar sem substituir anteriores.
 
-O criador da sala pode ser diferente do host da partida.
+A tecla rejeitada não altera a referência. A repetição automática do teclado segue a mesma regra.
 
-## 6. Preparação
+Há no máximo dois comandos pendentes, contando enviados e aceitos pelo host, mas ainda não conhecidos como executados. O tamanho da estrutura é o contador. MOVE_ACCEPTED não libera espaço.
 
-1. O jogador abre sua porta P2P e se registra no lobby.
-2. Cria ou entra em uma sala.
-3. O criador solicita início com três ou quatro participantes.
-4. A sala entra em PREPARANDO e congela a lista daquela tentativa.
-5. O lobby distribui participantes e endpoints.
-6. Os jogadores estabelecem a malha e medem RTT.
-7. O lobby distribui ranking e configuração inicial.
-8. Cada aplicativo envia prontidão automática após concluir sua preparação.
-9. O host inicial aguarda todos sobre a mesma configuração.
-10. Ocorrem a contagem e a janela de entrada antes do primeiro movimento.
+### Referência, reserva e validade
 
-A configuração contém participantes, arena, posições e direções iniciais, taxa de ciclos, parâmetros compartilhados e votantes iniciais.
+O comando inclui o ciclo oficial conhecido quando a tecla foi aceita. O host reserva o primeiro ciclo ainda aberto sem comando desse jogador.
 
-São utilizados pontos de partida predefinidos. O lobby sorteia sua atribuição aos jogadores.
+No máximo uma curva por jogador por ciclo. Sem comando aplicável, mantém a direção.
 
-Cada tentativa possui identificação própria. Mensagens de tentativas antigas são ignoradas.
-
-### Falha antes do início
-
-Se alguém cair antes do primeiro ciclo:
-
-- A tentativa e qualquer contagem são canceladas.
-- A sala permanece em PREPARANDO, mesmo com participantes suficientes.
-- A configuração é atualizada.
-- O criador solicita uma nova tentativa; não há início automático.
-
-Para receber novos jogadores, o criador cancela a preparação e reabre a sala em AGUARDANDO.
-
-Se o criador sair, assume o integrante presente que entrou há mais tempo. Uma sala vazia é removida.
-
-Se o lobby cair durante a preparação, a tentativa pode ser cancelada.
-
-## 7. Entrada de comandos
-
-### Validação local
-
-A tecla é validada imediatamente em relação à última direção aceita pendente. Sem pendências, usa-se a direção oficial conhecida.
-
-- Direção igual: ignorar como redundante.
-- Direção oposta: rejeitar.
-- Direção perpendicular: aceitar se houver espaço.
-- Fila cheia: ignorar a nova tecla sem substituir anteriores.
-
-Uma tecla rejeitada não altera a referência de validação. A repetição automática do teclado segue as mesmas regras.
-
-### Capacidade
-
-Limite inicial: dois comandos pendentes por jogador.
-
-Esse total inclui comandos em trânsito e aceitos pelo host, mas ainda não executados.
-
-O cliente mantém uma estrutura com os comandos pendentes e utiliza seu tamanho como contador.
-
-A confirmação de aceitação não libera espaço. A execução oficialmente conhecida, rejeição ou descarte remove a pendência.
-
-### Validação no host
-
-O host verifica:
-
-- Identidade associada à conexão.
-- Partida e época de liderança.
-- Versão da fila e sequência do comando.
-- Direção, capacidade e validade.
-- Estado da partida e condição da moto.
-
-O host também valida a direção; a validação local não substitui a autoridade.
-
-### Ciclo de referência e execução
-
-O cliente informa o ciclo oficial conhecido quando a tecla foi aceita: o ciclo de referência.
-
-O host reserva o primeiro ciclo ainda aberto e sem comando daquele jogador, respeitando ordem e validade.
-
-A confirmação informa o ciclo de execução reservado.
-
-Cada jogador executa no máximo uma mudança de direção por ciclo. Sem comando aplicável, mantém a direção.
-
-O fechamento das entradas é comum a todos. Comandos processados depois dele só podem entrar em ciclos seguintes.
-
-### Validade
-
-O comando vence quando:
+Um comando vence quando:
 
     ciclo_de_execucao - ciclo_de_referencia >= 3
 
-Exemplo: referência 42 permite execução nos ciclos 43 e 44. No 45, venceu.
+Referência 42 permite execução em 43 e 44, não em 45. A validade é checada na reserva e antes de executar. É prazo máximo, não tempo de espera.
 
-Verificar validade na reserva e antes da execução.
-
-O prazo não é uma espera obrigatória. O comando deve executar no primeiro ciclo permitido.
+Um ponto único fecha as entradas do ciclo. Todos os comandos selecionados são retirados nesse ponto; não consultar as filas em momentos diferentes durante o cálculo.
 
 ### Limpeza
 
-Uma rejeição ou expiração que comprometa a sequência limpa as pendências daquele jogador.
+Quando uma rejeição compromete a sequência, limpam-se todas as pendências daquele jogador. O host aumenta queue_version, informa a direção oficial e espera QUEUE_RESET_ACK antes de aceitar novos comandos dessa versão.
 
-A limpeza:
+Mensagens antigas são descartadas sem disparar novas limpezas. Na migração, muda a época e todas as filas são reiniciadas. Registros já produzidos pertencem à recuperação; não são apagados como se fossem teclas pendentes.
 
-- Não reverte movimentos oficiais.
-- Atualiza a versão da fila.
-- Invalida mensagens antigas ainda em trânsito.
-- Exige reconciliar pendências e direção oficial antes de retomar os envios.
+A entrada local do host passa pelo mesmo caminho. A vantagem natural é somente a ausência do trajeto de rede.
 
-Moto eliminada não aceita novos movimentos.
+## 8. Motor determinístico
 
-A migração limpa as pendências de todos. Registros de ciclos recuperados não são comandos pendentes e podem precisar ser preservados.
+O estado contém dimensão, células ocupadas, motos e resultado.
 
-### Host
+Uma função step recebe esse estado e até uma direção por moto viva. Ela:
 
-O host utiliza o mesmo caminho de validação, reserva, capacidade e consumo. Sua tecla não modifica diretamente a simulação.
-
-Permanece a vantagem natural de não atravessar a rede até a autoridade.
-
-## 8. Motor do jogo
-
-Em cada ciclo:
-
-1. Selecionar até um comando por moto viva.
-2. Determinar todas as direções e destinos sem alterar a arena.
-3. Resolver conjuntamente as colisões.
-4. Produzir movimentos, rastros e eliminações.
-5. Avaliar o resultado.
+1. Valida as direções.
+2. Calcula todos os destinos sem modificar a arena.
+3. Resolve paredes, rastros e destinos iguais.
+4. Produz o novo estado e o conjunto de alterações.
+5. Avalia vitória ou empate.
 
 Convenções:
 
-- As células iniciais das motos já estão ocupadas.
-- Rastros anteriores permanecem.
-- Entrar em rastro ou sair da arena elimina a moto.
-- Motos com o mesmo destino são todas eliminadas.
-- Trocar de posições elimina ambas, pois os destinos já estavam ocupados.
-- Um destino alcançado dentro da arena fica ocupado, inclusive numa colisão entre motos em célula antes vazia.
-- Não se cria rastro fora da arena.
-- Uma moto eliminada antes do movimento daquele ciclo não avança.
-- Um sobrevivente vence; zero significa empate; dois ou mais continuam.
+- Posições iniciais já contam como ocupadas.
+- Rastros permanecem após eliminações.
+- Troca de posições elimina ambas: os destinos já estavam ocupados.
+- Destinos iguais eliminam todas as motos envolvidas.
+- Todo destino alcançado dentro da arena fica ocupado, mesmo numa colisão entre motos em célula antes vazia.
+- Não gravar célula fora da arena.
+- Ao sair da arena, a posição armazenada da moto eliminada permanece a última válida; o destino tentado aparece no evento de colisão.
+- Uma eliminação por saída/desconexão é um evento de controle aplicado na fronteira entre movimentos. Não desloca as demais motos. Pode terminar a partida.
+- Um sobrevivente vence; zero significa empate.
 
-A ordem de processamento dos jogadores não pode afetar o resultado.
+A regra de eliminação de controle evita mover motos durante uma pausa de transferência. O campo cycle continua identificando o último movimento aplicado.
 
-## 9. Histórico compartilhado
+## 9. Registros e estado em memória
 
-O histórico de teclas solicitadas é diferente do registro dos ciclos executados.
+**Comando** é a solicitação individual. **Registro** é uma decisão compartilhada. **Histórico** é a sequência de registros.
 
-O registro compartilhado permite recuperar os comandos aplicados e seus efeitos: movimentos, rastros, eliminações e resultado.
+Cada registro tem index, epoch, kind, payload, prev_hash e hash. Registros CYCLE também incluem cycle. Outros tipos podem estabelecer liderança, retirar jogador ou mudar votantes.
 
-Cada processo mantém em memória:
+Exemplo:
 
-- Estado inicial e estado atual.
-- Registros ordenados.
-- Última posição armazenada.
-- Última posição confirmada conhecida.
-- Último registro aplicado.
-- Época de liderança.
-- Configuração de votantes.
+    posição 58: resultado do ciclo 43, com comandos de B e C
+    posição 59: configuração conjunta
+    posição 60: configuração definitiva
+    posição 61: resultado do ciclo 44
 
-Posição no registro e ciclo do jogo são diferentes. Registros de liderança e configuração não movimentam motos.
+Cada processo mantém:
 
-Confirmar até a posição N significa ter armazenado toda a sequência até N, sem lacunas. Registros ausentes são solicitados.
+- Configuração inicial e hash.
+- Histórico, inclusive sufixo provisório.
+- commit_index: até onde sabe que foi confirmado.
+- last_applied: até onde aplicou ao estado oficial.
+- current_epoch e voted_for.
+- Configurações de votantes e liderança.
+- Arena confirmada, filas e estado da sessão.
 
-## 10. Confirmação dos ciclos
+O host guarda também next_index/match_index de cada par. Estado candidato é separado do estado confirmado. Pode ser um delta, sem duplicar toda a matriz.
 
-Fluxo normal:
+## 10. Replicação e confirmação
 
-1. O host calcula e registra o ciclo.
-2. Distribui o registro.
-3. Os participantes armazenam e respondem imediatamente.
-4. O host obtém a maioria aplicável, contando sua própria cópia.
-5. Confirma a sequência e anuncia o avanço.
-6. Todos aplicam os registros confirmados em ordem, uma única vez.
+1. O líder calcula uma decisão e acrescenta o registro.
+2. Envia APPEND aos demais.
+3. Cada receptor confere prefixo e conteúdo, armazena e responde imediatamente.
+4. O líder reúne a maioria exigida.
+5. Avança commit_index e anuncia esse avanço.
+6. Todos aplicam os registros confirmados em ordem.
 
-A confirmação significa armazenamento, não uma votação sobre a justiça da colisão.
+Confirmar armazenamento não é votar se uma colisão foi justa. Receber bytes no sistema operacional também não é armazenar o registro na aplicação.
 
-A apresentação inicial, inclusive no host, acompanha os ciclos confirmados.
+Um ACK cumulativo até N exige prefixo completo. Cada votante conta uma vez, para o conteúdo e a época corretos.
 
-Participantes podem exibir temporariamente ciclos diferentes por atraso, mas não podem confirmar resultados conflitantes.
+Somente registros da época atual podem avançar diretamente a confirmação. Confirmar um registro atual confirma seu prefixo anterior. Assim, uma nova liderança replica EPOCH_START depois dos registros recuperados antes de considerá-los oficiais.
 
-A proposta inicial admite um ciclo de jogo aguardando confirmação por vez. A cadência normal é fixa; se não houver progresso suficiente, a simulação pausa para sincronização, sem inventar ciclos ou acelerar depois para compensar.
+A primeira implementação apresenta movimentos apenas depois de confirmados. A frequência normal é fixa; se a confirmação atrasar, a simulação pausa, sem saltar células nem acelerar para compensar. Mantém-se no máximo um ciclo de movimento não confirmado por vez.
 
-Os prazos exatos dessa pausa precisam ser formalizados.
+## 11. Eleição
 
-## 11. Atividade e detecção de falhas
+A fila é o ranking inicial. A época 1 pertence ao primeiro ID; época E corresponde a ranking[(E-1) % tamanho]. Épocas de IDs já removidos são puladas. Isso dá um único candidato previsto por época e permite percorrer a fila novamente.
 
-Ausência de teclas não significa desconexão.
+Uma suspeita inicia pausa e ELECTION_NOTICE com época maior. O candidato daquela época pede votos. Se estiver atrás, solicita os registros faltantes sem apagar trecho confirmado; se não puder atualizar-se, deixa a tentativa expirar.
 
-Após três intervalos de ciclo sem enviar comandos, o jogador envia uma mensagem pequena de atividade, repetindo enquanto necessário.
+Votar exige:
 
-Comandos e outras mensagens válidas também demonstram atividade.
+- Candidato previsto e ainda votante.
+- Época atual.
+- Nenhum voto em outro candidato nessa época.
+- Histórico ao menos tão atualizado quanto o local.
 
-O host já demonstra atividade pelas atualizações normais; durante pausas, envia atividade quando necessário.
+Comparar (last_log_epoch, last_log_index) lexicograficamente: primeiro época, depois posição. Igualdade permite voto. A época da eleição não reescreve épocas de registros antigos.
 
-Os prazos:
+Um voto é guardado antes da resposta. Um processo que já conhece época superior rejeita autoridade inferior. O líder precisa da maioria apropriada, inclusive as duas maiorias na fase conjunta.
 
-- Usam relógio monotônico.
-- Continuam funcionando com a simulação pausada.
-- Distinguem intervalo de atividade de timeout de suspeita.
-- Devem tolerar mais de uma oportunidade de verificação.
+O vencedor ainda não libera o jogo: reconcilia registros, confirma EPOCH_START, resolve remoções necessárias e sincroniza a base. Eleição sem progresso percorre candidatos até o prazo total; depois cada processo encerra localmente de forma controlada.
 
-TCP ajuda com fechamento e erros, mas uma conexão aparentemente aberta não prova que o processo está disponível.
+Uma partição não garante que todos encerrem no mesmo instante. A propriedade exigida do algoritmo é não confirmar histórias incompatíveis, não provar que todos estão mortos.
 
-Timeout gera suspeita; sozinho, não autoriza liderança nem remoção de votantes.
+## 12. Recuperação e snapshots
 
-## 12. Eleição e recuperação
+Encontrar o prefixo comum por index, epoch e hash:
 
-### Eleição
+- Falta registro: transferir o trecho.
+- Registro idêntico: não reaplicar.
+- Sufixo provisório incompatível: substituir pela sequência do líder elegível.
+- Conflito com registro confirmado: pausar, verificar contexto e prova de confirmação; persistindo o conflito, abortar com diagnóstico.
 
-- Cada tentativa usa uma época superior à conhecida.
-- Cada votante concede no máximo um voto por época.
-- O ranking orienta a preferência.
-- O candidato precisa de histórico elegível e maioria.
-- O preferencial se atualiza ou outro candidato assume.
-- A comparação considera épocas e posições dos registros.
-- Reconhecida uma liderança válida superior, a autoridade anterior não é aceita.
+Nunca sobrescrever posição menor ou igual a commit_index.
 
-Não basta selecionar o maior número de ciclo.
+Após confirmar a sequência recuperada, o líder envia snapshot completo. Ele contém arena, ciclo, motos, resultado, última posição/época/hash aplicados e votantes. É produzido somente de estado confirmado.
 
-### Recuperação
+O receptor valida a âncora contra seu histórico, aplica registros faltantes e compara o estado. Não aceita uma matriz arbitrária desconectada do histórico.
 
-Os participantes compartilham metadados e transferem registros ausentes.
+Todos os participantes que continuarão confirmam a mesma base. Só então começa a contagem. Quem não responde precisa ser tratado pelo procedimento de falha; não é removido apenas para liberar a espera.
 
-A recuperação deve:
+## 13. Mudança dos votantes
 
-1. Preservar o prefixo confirmado.
-2. Estabelecer uma sequência única compatível com a eleição.
-3. Resolver registros pendentes sem substituir trechos confirmados.
-4. Confirmar a sequência sob a nova liderança.
-5. Sincronizar o estado de retomada.
+Uma moto eliminada pode continuar assistindo e votando. A composição muda somente por registros.
 
-Um ciclo confirmado pode ser desconhecido por alguns se o host caiu durante seu anúncio.
+Para retirar D de [A,B,C,D]:
 
-Algo existente somente na memória do host que caiu não é recuperável e não poderia ter sido confirmado por maioria.
+1. Registrar CONFIG_JOINT: antiga [A,B,C,D], nova [A,B,C].
+2. Confirmá-lo pelas duas maiorias.
+3. Durante a transição, eleições e confirmações exigem ambas.
+4. Registrar CONFIG_FINAL.
+5. Confirmá-lo também pelas duas maiorias.
+6. Depois de confirmado, somente [A,B,C] conta.
 
-### Registros pendentes
+Um nó que já armazenou CONFIG_JOINT usa a regra conjunta para votar e aceitar confirmações, mesmo antes de conhecer seu commit. É uma restrição conservadora. CONFIG_FINAL não relaxa para a nova maioria antes de sua confirmação.
 
-A proposta é preservar a sequência pendente compatível do líder eleito e confirmá-la antes da retomada.
+Não iniciar outra reconfiguração enquanto uma estiver pendente. Versões de configuração impedem contar respostas pelo grupo errado.
 
-O líder acrescenta um registro de estabelecimento da liderança na época atual, depois dos registros recuperados. A confirmação desse registro pelas regras vigentes confirma o prefixo anterior.
+Se houver falha no meio, a recuperação preserva etapas confirmadas e trata o sufixo ainda provisório. Timeout não autoriza desfazer decisão confirmada.
 
-Esse registro não consome um ciclo. As épocas dos registros antigos não são reescritas.
+## 14. Saída e transferência
 
-Esse procedimento depende de regras completas de eleição, continuidade e confirmação. Não deve ser substituído por seleção arbitrária de histórico ou votação isolada de hashes.
+Participante comum: pede saída, continua conectado, sua moto é retirada por registro PLAYER_LEFT e os votantes são reconfigurados. Só depois recebe LEAVE_APPROVED.
 
-### Retomada
+Host: confirma o registro em andamento, pausa e solicita a candidatura do próximo elegível. Continua como votante durante a transferência. A nova liderança resolve o histórico, retira a moto anterior, conclui sua remoção e autoriza saída.
 
-1. Eleger.
-2. Recuperar e confirmar.
-3. Atualizar a arena e direções durante a pausa.
-4. Registrar a eliminação da moto que falhou, quando aplicável.
-5. Sincronizar os participantes restantes.
-6. Contagem de três segundos, com entradas bloqueadas.
-7. Janela de entrada de três segundos, com motos paradas.
-8. Retomar no próximo ciclo.
+Se a retirada terminar a partida, passa-se ao encerramento em vez de fazer uma retomada desnecessária.
 
-Essas duas fases temporizadas, mantidas separadas, somam seis segundos. Unificá-las exige alterar explicitamente a regra de entrada durante a contagem.
-
-Movimentos recuperados não são executados novamente. As filas antigas são descartadas.
-
-Sem condições de liderança e confirmação seguras, aplica-se encerramento controlado, sem inventar vencedor ou empate.
-
-## 13. Votantes e reconfiguração
-
-Motos vivas e processos votantes são conjuntos diferentes.
-
-Um eliminado pode continuar assistindo e votando. Um host eliminado pode continuar coordenando.
-
-A lista de votantes integra o registro compartilhado.
-
-Mudanças usam configuração conjunta:
-
-- Durante a transição, exige-se maioria antiga e nova.
-- Depois, confirma-se a configuração definitiva.
-- Uma alteração por vez.
-- Ninguém recalcula a composição apenas por sua percepção local.
-
-Maiorias usuais:
-
-- Três de quatro.
-- Dois de três.
-- Dois de dois.
-
-Um processo restante não pode se declarar maioria de uma configuração de dois.
-
-A ativação das configurações e suas mensagens ainda precisam ser formalizadas.
-
-## 14. Saída voluntária
-
-### Participante comum
-
-1. Solicita saída e mantém a conexão.
-2. Sua moto, se viva, é eliminada oficialmente.
-3. A configuração é alterada com segurança.
-4. Recebe autorização para desconectar.
-5. Escolhe voltar ao lobby ou sair.
-
-### Host
-
-1. Conclui a confirmação do ciclo e pausa.
-2. Limpa comandos pendentes.
-3. Atualiza o sucessor.
-4. O sucessor estabelece liderança com maioria.
-5. A nova liderança confirma a eliminação da moto anterior, se necessária, e sua remoção dos votantes.
-6. O antigo host recebe autorização de saída.
-7. Os demais sincronizam e retomam.
-
-A comunicação continua durante a pausa. Falha durante a transferência aciona recuperação.
+Uma falha durante a transferência segue a recuperação normal. Não presumir que o antigo host pode reassumir sozinho porque a transferência demorou.
 
 ## 15. Encerramento
 
-1. O ciclo final inclui o resultado global e é confirmado.
-2. O resultado é anunciado a todos.
-3. Cada aplicativo apresenta vitória, derrota ou empate conforme seu jogador.
-4. Entradas são bloqueadas e pendências limpas.
-5. Todos ainda integrantes da sessão confirmam a entrega.
-6. O host conclui o encerramento normal.
-7. O usuário escolhe voltar ao lobby ou sair.
+O registro terminal é confirmado como os demais. Normalmente é um CYCLE; pode ser PLAYER_LEFT quando uma saída elimina a última adversária entre movimentos.
 
-Quem morreu antes não passa a empatar com os últimos sobreviventes.
+O host envia o mesmo MATCH_OVER a todos. Cada aplicativo mostra seu resultado individual. Eliminados anteriores não passam a empatar com os últimos sobreviventes.
 
-Timeout não equivale a confirmação. Falhas exigem tratamento e remoção confirmada quando possível.
+Todos ainda integrantes confirmam a entrega. Até lá, continuam atendendo rede e guardando os registros. O host só envia SESSION_CLOSE depois dos ACKs necessários ou de remoções confirmadas.
 
-Os registros permanecem disponíveis durante o encerramento. Se o host cair durante a entrega, a recuperação preserva ou conclui o resultado.
+Timeout não é ACK. Se faltar maioria para remover alguém, o fechamento deixa de ser normal e passa a controlado.
 
-Quem não conseguir obter o resultado informa sua indisponibilidade, sem inventá-lo.
+Depois de um resultado terminal, novos controles de liderança ou configuração não alteram o resultado esportivo. Resultado conhecido e confirmado não é desfeito por queda posterior. Quem não o conhece tenta recuperar; se não conseguir, informa resultado indisponível, nunca inventa empate.
 
-O lobby indisponível não altera o resultado nem impede fechar a partida. O aplicativo permite tentar novamente ou sair.
+O usuário escolhe retornar ao lobby ou sair. A escolha pode ser feita enquanto o fechamento ocorre, mas o processo espera a aprovação normal antes de desconectar.
 
 ## 16. Estados
 
-### Aplicativo
-
-| Estado | Responsabilidade |
+| Estado | Entrada/saída principal |
 |---|---|
-| DESCONECTADO | Sem sessão |
-| CONECTANDO_LOBBY | Conexão e registro |
-| NO_LOBBY | Listar, criar e entrar |
-| NA_SALA | Aguardar o criador |
-| PREPARANDO | Malha, RTT, configuração e prontidão |
-| CONTAGEM | Entradas bloqueadas |
-| JANELA_ENTRADA | Comandos permitidos; motos paradas |
-| EM_PARTIDA | Ciclos confirmados |
+| DESCONECTADO | Conectar ou sair |
+| CONECTANDO_LOBBY | REGISTER / REGISTER_OK |
+| NO_LOBBY | Criar ou entrar |
+| NA_SALA | Aguardar criador |
+| PREPARANDO | Malha, RTT, configuração e READY |
+| CONTAGEM | Primeiro 2,5 s; teclado bloqueado |
+| JANELA_ENTRADA | Últimos 500 ms da mesma contagem |
+| EM_PARTIDA | Movimento por registros confirmados |
 | SINCRONIZANDO | Eleição, recuperação, transferência ou reconfiguração |
-| ENCERRANDO | Resultado, entrega e fechamento |
-| RESULTADO | Voltar ao lobby ou sair |
+| ENCERRANDO | Resultado confirmado e entrega |
+| RESULTADO | Lobby ou saída |
 
-Informações independentes:
+Moto viva/eliminada, líder/seguidor/candidato e votante/observador são dimensões independentes.
 
-- Liderança: seguidor, candidato ou líder.
-- Moto: viva ou eliminada.
-- Votação: integrante ou não da configuração.
-- Sala: criador ou participante comum.
+Receber uma época maior ou perder sincronização leva a SINCRONIZANDO. A próxima apresentação de movimento só ocorre após a sequência de recuperação e retomada.
 
-### Sala
+## 17. O que demonstrar na apresentação
 
-AGUARDANDO, PREPARANDO, EM_PARTIDA e FINALIZADA.
+- Por que sockets TCP não eliminam a necessidade de framing e timeout.
+- Como duas curvas são enfileiradas sem permitir inversão instantânea.
+- Por que colisões são calculadas simultaneamente.
+- Diferença entre comando, ciclo, registro, posição e época.
+- Como armazenamento, confirmação e aplicação são separados.
+- Por que ranking não substitui votação.
+- Como recuperar um ciclo cuja confirmação chegou só a parte dos jogadores.
+- Como sair sem deixar dois hosts e por que maioria não pode ser reduzida localmente.
+- Qual cenário não consegue continuar por falta de quorum.
 
-Somente AGUARDANDO aceita entradas.
-
-## 17. Redução de latência
-
-- Responder ao armazenamento imediatamente.
-- Confirmar assim que houver maioria.
-- Não bloquear o processamento por socket lento.
-- Enviar o resultado uma vez e usar anúncio curto de confirmação.
-- Configurar TCP_NODELAY nas conexões da partida.
-- Montar a mensagem inteira antes do envio.
-- Executar no primeiro ciclo permitido.
-
-Medir:
-
-- No cliente: tecla aceita até movimento oficial recebido.
-- No host: recepção, cálculo e obtenção de maioria.
-
-Taxa de ciclos, capacidade e validade são configuráveis e serão ajustadas nos testes.
-
-## 18. Implementação e validação
-
-Ordem sugerida:
-
-1. Lobby e salas.
-2. Motor determinístico.
-3. Partida com host fixo e falha controlada.
-4. Replicação e confirmação.
-5. Transferência planejada.
-6. Eleição e recuperação.
-7. Reconfiguração e encerramento completo.
-
-Testar:
-
-- Três e quatro processos, inclusive em máquinas distintas.
-- Colisões simultâneas e empate.
-- Expiração, limpeza e mensagens antigas.
-- Confirmação anunciada parcialmente.
-- Falha antes e depois de obter maioria.
-- Queda de jogador, host e candidato.
-- Saídas sucessivas e configuração com dois votantes.
-- Queda do lobby antes e depois do início.
-- Entrega parcial do resultado.
-- Atrasos, silêncio de rede e sockets lentos.
-
-## 19. Pendências
-
-Antes de considerar a migração concluída e o protocolo interoperável:
-
-- Definir JSONs P2P e matriz completa de transições.
-- Formalizar eleição, comparação de registros e épocas.
-- Formalizar correspondência e substituição de sufixos não confirmados.
-- Formalizar confirmação na nova liderança e snapshots.
-- Definir ativação das configurações conjunta e definitiva.
-- Especificar reconciliação após limpeza individual de fila.
-- Definir timeouts, limites de mensagem e filas de rede.
-- Definir encerramento controlado sem maioria.
-- Escolher valores de arena, spawns, ciclos e amostras de RTT.
-
-Essas pendências não devem ser preenchidas por decisões locais incompatíveis entre implementações.
+Use os roteiros e critérios de [implementacao.md](implementacao.md). A especificação orienta a construção; as garantias precisam ser verificadas nos testes da implementação.

@@ -1,43 +1,21 @@
-# Game Tron Redes
+# Tron P2P — projeto de Redes
 
-O objetivo do projeto é a especificação e implementação de um protocolo de aplicação customizado para um jogo Tron multijogador em tempo real. 
+Projeto acadêmico de um jogo Tron com lobby, malha de sockets TCP e protocolo de aplicação específico.
 
-A solução utiliza uma arquitetura híbrida construída inteiramente com *sockets* TCP puros em Python. Um servidor centralizado atua como Lobby para descoberta de jogadores, enquanto as partidas ocorrem numa malha Peer-to-Peer (P2P) com um par autoritário. O sistema garante consistência de estado e tolerância a falhas através da migração determinística de host em caso de desconexão.
+O contrato de implementação e o material de estudo estão em **[docs/README.md](docs/README.md)**.
 
-## Estrutura do Projeto
-O código-fonte está isolado no diretório `src/` para separar a lógica de rede das regras do jogo:
-* `src/core/`: Domínio partilhado, configuração e serialização do protocolo.
-* `src/lobby/`: Servidor central de descoberta e registo.
-* `src/game/`: Motor do jogo Tron (matriz, regras e colisões isoladas da rede).
-* `src/node/`: Nó do jogador, interface de terminal e máquina de estados P2P.
-* `docs/`: Especificação técnica da arquitetura e do protocolo (RFC).
+- [Arquitetura](docs/arquitetura.md)
+- [Protocolo de mensagens e algoritmos](docs/protocolo.md)
+- [Decisões e alternativas](docs/decisoes.md)
+- [Glossário](docs/glossario.md)
+- [Implementação, testes e apresentação](docs/implementacao.md)
 
-## Configuração do Ambiente
-Este projeto utiliza o [Poetry](https://python-poetry.org/) para gestão de dependências e isolamento do ambiente virtual.
+A documentação descreve o comportamento a construir. Ela não afirma que os módulos e garantias já estejam implementados ou testados.
 
-1. Clone o repositório:
-   ```bash
-   git clone [https://github.com/tegnoue/game-tron-redes.git](https://github.com/tegnoue/game-tron-redes.git)
-   cd game-tron-redes
-   ```
-2. Instale as dependências (inclui `rich` para a interface e `python-dotenv`):
-   ```bash
-   poetry install
-   ```
-3. Configure as variáveis de ambiente:
-   ```bash
-   cp .env.example .env
-   ```
+A regra de preparação é de três segundos no total: teclado bloqueado nos primeiros 2,5 segundos e liberado somente nos últimos 500 ms.
 
-## Execução
-Abra terminais separados para o servidor e para os clientes. Utilize o ambiente do Poetry para executar os módulos.
+## Ambiente
 
-**Para iniciar o Lobby:**
-```bash
-poetry run python -m src.lobby
-```
+Usar Python com Poetry. A interface pode utilizar bibliotecas auxiliares de terminal, mas rede e protocolo devem usar diretamente a API de sockets.
 
-**Para iniciar um Jogador (Nó):**
-```bash
-poetry run python -m src.node
-```
+Consulte o guia de implementação para configuração, comandos de execução esperados, ordem de construção e demonstrações. Ao concluir cada módulo, atualize as instruções de execução para refletir os comandos realmente disponíveis.

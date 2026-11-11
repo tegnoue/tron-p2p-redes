@@ -1,496 +1,143 @@
 # Registro de decisões — Tron P2P
 
-## Objetivo
+## 1. Como usar este arquivo
+
+Este registro permite à equipe acompanhar as escolhas feitas na discussão, as alternativas consideradas e os motivos. Os outros documentos descrevem diretamente o contrato técnico.
+
+- **Confirmada:** decisão explicitamente aceita, inclusive como parte de uma proposta.
+- **Base inicial:** organização aceita para implementar e ajustar.
+- **Escolha técnica inicial:** detalhe preenchido na especificação para tornar possível implementar; não é apresentado como fala ou decisão explícita do grupo.
+- Aprovar uma ideia de arquitetura não significa que sua implementação distribuída esteja testada.
+
+Requisitos do professor não são alternativas livres: lobby, comunicação direta, três ou quatro jogadores no início, processos separados, sockets, configuração e concordância do resultado são obrigações.
+
+## 2. Rede e autoridade
+
+| ID | Alternativas consideradas | Decisão e situação | Motivo e consequência |
+|---|---|---|---|
+| D01 | TCP; UDP com confiabilidade e ordem na aplicação | **Confirmada:** TCP no lobby e no jogo | Menor escopo de comunicação para poucos processos. A aplicação ainda precisa de framing, filas e prazos. |
+| D02 | Conectar apenas ao host; malha completa | **Confirmada:** malha completa, uma conexão por par | Facilita recuperação e comunicação entre sucessores. Quatro jogadores usam seis conexões. |
+| D03 | Host fixo; lockstep; host com migração | **Confirmada:** host autoritário com eleição e recuperação | Cálculo central facilita arbitragem, com possibilidade de continuar após falha. |
+| D04 | Raft completo; protocolo específico | **Confirmada:** protocolo específico para este jogo | Raft completo foi considerado complexo para o escopo. Usaremos regras conhecidas de voto, época, log e maioria, sem alegar equivalência automática a Raft. |
+| D05 | Ping até lobby; RTT entre pares; ordem por ID | **Confirmada:** ranking único pela média de RTT entre pares | A rede relevante é a da partida. O lobby consolida a preferência; votação continua obrigatória. |
 
-Permitir que a equipe acompanhe as escolhas de arquitetura, as alternativas consideradas e os motivos apresentados na discussão.
+O início usa a porta P2P aberta e identificada. O menor ID inicia cada conexão. Essa foi uma convenção técnica aceita para evitar duplicatas.
 
-Este documento complementa arquitetura.md e protocolo.md. Não substitui a especificação das mensagens nem significa que os mecanismos de consenso já estejam completamente definidos.
+## 3. Comandos
 
-## Como interpretar
+| ID | Alternativas consideradas | Decisão e situação | Motivo e consequência |
+|---|---|---|---|
+| D06 | Esperar o host; validar na tecla | **Confirmada:** validação local imediata pela última direção aceita | Responsividade e sequência de curvas coerente. Tecla rejeitada não altera a referência. |
+| D07 | Fila longa; um ou dois pendentes | **Confirmada:** dois pendentes no total | Permite antecipação sem acumular comandos por muitos segundos. Inclui enviados e não executados. |
+| D08 | Contador separado; tamanho da estrutura | **Confirmada:** usar tamanho da fila de pendências | Evita divergência entre quantidade e conteúdo. Aceitação não libera espaço. |
+| D09 | Cliente escolher execução; host reservar | **Confirmada:** referência do cliente e reserva pelo host | Separa momento da solicitação e aplicação real; no máximo uma curva por jogador por ciclo. |
+| D10 | Rejeitar referência menor; vencer em dois ou três ciclos | **Confirmada:** vence ao atingir três ciclos | Dois ciclos, no critério de idade >= limite, impediriam duas curvas com a mesma referência. |
+| D11 | Descartar só o inválido; manter resto; limpar sequência | **Confirmada:** limpar pendências quando perderem contexto | Evita curvas que dependiam da descartada e sensação de comandos antigos. |
+| D12 | Preservar teclas da pausa; limpar; prioridade local do host | **Confirmada:** limpar na migração e aplicar mesmas regras ao host | Evita teclas acumuladas e privilégios criados pelo código. Resta a diferença natural de rede. |
+| D13 | Parâmetros definitivos; ajustar com medições | **Confirmada:** parâmetros configuráveis e testes | Medir tecla até movimento distingue espera de tick, fila e rede. |
+
+Referência 42 permite executar em 43 e 44. No 45, o comando venceu. Três ciclos são validade máxima, não espera.
+
+A especificação usa versões de fila e ACK de limpeza. São mecanismos para cumprir D11; seus nomes de campos são escolhas técnicas iniciais.
 
-- **Confirmada:** escolha explicitamente aceita na discussão.
-- **Base inicial:** proposta aceita para começar e revisar durante desenvolvimento e testes.
-- **Em aberto:** assunto que ainda precisa de definição.
-- As justificativas resumem os argumentos apresentados, não sendo necessariamente citações literais.
-- As alternativas são caminhos considerados ou comparados na conversa; nem todas chegaram a constituir propostas completas.
+## 4. Motor e histórico
 
-## 1. Requisitos que vieram do enunciado
+| ID | Alternativas consideradas | Decisão e situação | Motivo e consequência |
+|---|---|---|---|
+| D14 | Atualizar uma moto por vez; calcular destinos juntos | **Confirmada:** transição simultânea | Ordem de processamento não favorece jogador. As regras esportivas vêm do enunciado. |
+| D15 | Recuperar pelas teclas; pelos registros de resultados | **Confirmada:** registros de ciclos e controles | Teclas não informam o que chegou e foi aplicado. |
+| D16 | Confirmar só no fim; durante o jogo | **Confirmada:** confirmar registros durante a partida por maioria | Permite recuperar uma falha anterior ao fim. Armazenamento, confirmação e aplicação são distintos. |
+| D17 | ACK isolado; prefixo cumulativo | **Confirmada:** confirmar N exige todos até N | Impede histórico com lacunas. Registro ausente é solicitado. |
+| D18 | Memória; persistência em disco | **Confirmada:** estado e histórico em memória | Escopo menor. A versão inicial não aceita retorno de processo reiniciado. |
 
-Estes pontos são obrigações do trabalho, não escolhas livres da equipe:
+Posição no histórico é global. Um registro pode conter movimentos de vários jogadores ou uma mudança de votantes. Não se confunde com a sequência de teclas de cada jogador.
 
-- Lobby para registro, criação/listagem de partidas e descoberta.
-- Comunicação direta entre jogadores durante a partida.
-- Partidas iniciadas com três ou quatro jogadores, em processos separados.
-- Partidas em andamento independentes da disponibilidade do lobby.
-- Concordância sobre colisões, ciclos e resultado.
-- Queda de jogador comum elimina sua moto e permite continuar.
-- Falha do coordenador permite, no mínimo, encerramento controlado.
-- Endereços e portas configuráveis.
-- Comunicação diretamente pela API de sockets.
-- Protocolo documentado com mensagens, estados e tratamento de falhas.
+## 5. Eleição e recuperação
 
-A equipe escolheu buscar continuidade após a queda do host, além do mínimo permitido pelo enunciado.
+| ID | Alternativas consideradas | Decisão e situação | Motivo e consequência |
+|---|---|---|---|
+| D19 | Sucessor assumir sozinho; pedir votos | **Confirmada:** fila de sucessão, histórico elegível e maioria | Ranking é preferência, não autorização. O preferencial se atualiza ou outro tenta. |
+| D20 | Histórico estritamente melhor; igual também elegível | **Confirmada:** igualdade permite voto | Cópias idênticas não devem bloquear a eleição. Compara-se época do último registro e depois posição. |
+| D21 | Mais de um voto; voto único por época | **Confirmada:** um voto por participante por época | Impede autorizações conflitantes na mesma tentativa. Guardar voto antes de responder. |
+| D22 | Assumir após timeout; usar épocas e identidade | **Confirmada:** época distingue lideranças | Timeout suspeita; mensagem antiga não recupera autoridade. |
+| D23 | Repetir indefinidamente; reduzir quorum; limitar tentativas | **Confirmada:** próximos candidatos e prazo total | Sem maioria suficiente, encerrar de forma controlada. Não inventar uma lista menor. |
+| D24 | Apagar pendentes; impor matriz local; reconciliar logs | **Confirmada:** preservar confirmados e resolver provisórios | Uma confirmação pode ter sido anunciada parcialmente. |
+| D25 | Escolher conflito confirmado por maioria; parar | **Confirmada:** verificar e abortar se o conflito for real | Um trecho confirmado não deve ser sobrescrito. É violação de segurança, não votação sobre a verdade. |
+| D26 | Retomar ao eleger; recuperar antes | **Confirmada:** eleição, recuperação, sincronização e contagem | Evita apresentar curva recuperada inesperadamente depois da retomada. |
+| D27 | Contagem + janela extra; uma contagem com janela no final | **Confirmada final:** três segundos totais, entrada só nos últimos 500 ms | Elimina a ambiguidade de seis segundos. As filas antigas são limpas antes; as novas teclas são preservadas. |
 
-## 2. Resumo das escolhas
+As regras preventivas aprovadas são: voto único, comparação de histórico, quorum da configuração correta, correspondência de prefixos, ACK após armazenamento, confirmação na época atual, imutabilidade e aplicação única.
 
-| Tema | Escolha atual |
-|---|---|
-| Transporte | TCP com regras na camada de aplicação |
-| Topologia | Malha completa |
-| Autoridade | Host autoritário, com eleição e recuperação |
-| Preferência de host | Ranking pela média de RTT entre os pares |
-| Autorização de liderança | Histórico elegível e maioria |
-| Entrada | Validação local imediata |
-| Fila | Até dois comandos pendentes |
-| Aplicação | Host reserva o ciclo; uma curva por jogador por ciclo |
-| Validade | Vence ao atingir três ciclos de idade |
-| Confirmação | Registros dos ciclos confirmados por maioria |
-| Recuperação | Comparar registros, preservar confirmados e reconciliar pendentes |
-| Votantes | Composição alterada por decisão confirmada |
-| Armazenamento | Memória do aplicativo |
-| Início | Solicitado pelo criador, com prontidão automática |
-| Encerramento | Resultado global; todos da sessão confirmam a entrega |
-| Depois da partida | Usuário escolhe lobby ou saída |
-| Estados e JSONs iniciais | Base para desenvolvimento e revisão |
+O registro de estabelecimento da nova liderança permite confirmar o prefixo recuperado. Seu detalhamento usa o contrato de replicação; não é apenas uma mensagem dizendo “sou o líder”.
 
-## 3. Rede e autoridade
+## 6. Votantes, atividade e saída
 
-### D01 — TCP
+| ID | Alternativas consideradas | Decisão e situação | Motivo e consequência |
+|---|---|---|---|
+| D28 | Votantes fixos; decisão confirmada; recálculo local | **Confirmada:** composição alterada pelo histórico | Saídas não podem criar maiorias incompatíveis. |
+| D29 | Mudança direta; fase conjunta | **Confirmada:** conjunta, depois definitiva | A entrada, decisões intermediárias e finalização exigem maiorias antiga e nova. Nova simples só após final confirmado. |
+| D30 | Eliminado desconecta; espectador; escolha de saída | **Confirmada:** pode assistir ou sair com segurança | Moto eliminada e processo votante são condições diferentes. Host morto no jogo pode coordenar. |
+| D31 | Fechar imediatamente; transferência e remoção | **Confirmada:** aguardar aprovação | Evita perder informação. Se o host cair no meio, segue recuperação. |
+| D32 | Só TCP; só teclas; atividade explícita | **Confirmada:** mensagem pequena após três intervalos sem comandos | Inatividade no teclado não é desconexão; TCP pode demorar a detectar falhas. |
+| D33 | Esperas até tick; resposta imediata | **Confirmada:** reduzir esperas artificiais | ACK e anúncio de confirmação não aguardam o próximo tick. |
 
-**Situação:** confirmada.
+Na fase conjunta, decisões usam as duas listas. Ao armazenar a transição, a versão inicial usa a exigência conjunta conservadora também para votar. Essa é uma escolha técnica da especificação para não relaxar quorum por falta de anúncio.
 
-**Alternativas:** TCP; UDP com tratamento de perda, ordem e confiabilidade na aplicação.
+## 7. Lobby e encerramento
 
-**Decisão:** utilizar TCP no lobby e na partida, complementado por enquadramento, filas, identificação de mensagens, ciclos e timeouts na aplicação.
+| ID | Alternativas consideradas | Decisão e situação | Motivo e consequência |
+|---|---|---|---|
+| D34 | Início automático; criador solicita | **Confirmada:** criador inicia com três ou quatro | Permite esperar pelo quarto ou jogar com três. |
+| D35 | Entrada durante preparação; congelar tentativa | **Confirmada:** lista congelada | RTT, conexões, ranking e spawns usam o mesmo conjunto. |
+| D36 | Botão pronto; sem confirmação; pronto automático | **Confirmada:** READY automático e aguardar todos | Sem ação extra do usuário, mas com verificação de preparação. |
+| D37 | Começar com restantes; cancelar se alguém cair | **Confirmada:** cancelar antes do início e manter PREPARANDO | Mesmo com três, o criador solicita nova tentativa. |
+| D38 | Resultados individuais na rede; resultado global | **Confirmada:** resultado global | Todos conhecem a mesma decisão; aplicativo mostra a situação individual. |
+| D39 | Fechar ao enviar; maioria de entrega; todos | **Confirmada:** todos ainda integrantes confirmam entrega | Maioria confirma a decisão; todos confirmam recebimento antes do fechamento normal. Timeout não é ACK. |
+| D40 | Lobby obrigatório; sair automático; escolha | **Confirmada:** lobby ou sair, opcional | A indisponibilidade do lobby não muda o resultado. |
+| D41 | Documentos imutáveis; base revisável | **Base inicial:** estados e modelos de mensagens podem evoluir | A equipe aceitou uma proposta inicial de formatos e ajustes posteriores. |
 
-**Por quê:** para até quatro participantes numa rede local, oferece entrega ordenada e confiável com menor complexidade. Houve preferência explícita por TCP com ajustes na aplicação.
+## 8. Detalhes técnicos preenchidos na versão 1
 
-**Consequência:** TCP não oferece prazo de entrega. Precisamos tratar atraso e conexão aparentemente aberta sem atividade.
+Estes itens tornam o contrato implementável. São escolhas técnicas iniciais, não novas falas atribuídas ao grupo:
 
-### D02 — Malha completa
+- SHA-256 e JSON canônico para identificar registros e snapshots.
+- Envelope com IDs por conexão e correlação de respostas.
+- Tipos e nomes de mensagens completos em protocolo.md.
+- Padrão de 8 ciclos/s, timeouts e limites de buffers.
+- Arena 40×30 e pontos de partida afastados das bordas.
+- Cinco amostras de RTT por destino.
+- Laço de sessão como único dono dos dados.
+- Sem adição de jogadores ou reentrada durante partida.
+- Eventos de saída aplicados entre movimentos, sem deslocar os demais.
+- Registro START define o início lógico para mensagens atrasadas.
+- Atualização de README para distinguir contrato de código implementado.
 
-**Situação:** confirmada; escolha já presente no contexto inicial.
+Os valores são calibráveis pelos testes. Alterações de campos incompatíveis exigem revisão do contrato.
 
-**Alternativas:** conectar somente ao host atual; manter conexões entre todos.
+## 9. Limites que precisam ser apresentados
 
-**Decisão:** malha completa, com uma conexão TCP bidirecional por par. O menor ID inicia a conexão com o maior.
+A escolha por maioria implica um limite: dois votantes precisam de ambos. Se um falhar, não há quorum para confirmar vitória, remoção ou novo líder.
 
-**Por quê:** os pares já podem se comunicar durante recuperação e transferência, sem estabelecer toda a rede depois da falha do host.
+A documentação não afirma continuidade sob qualquer sequência de falhas. Esse cenário precisa ser demonstrado e avaliado frente ao requisito de continuidade de jogador comum. Não esconder essa limitação nem “resolvê-la” contando apenas quem responde.
 
-**Consequência:** três conexões com três participantes e seis com quatro. Todos precisam aceitar conexões na preparação.
+Também não há prova de resistência a fraude, retorno de processo sem memória ou entrega de resultado a máquinas que desapareceram.
 
-A malha não distribui automaticamente a autoridade do jogo.
+## 10. Revisões encerradas
 
-### D03 — Host autoritário com migração
+| Assunto | Proposta anterior | Regra vigente |
+|---|---|---|
+| RTT | Medir só até o lobby | Medir entre jogadores |
+| Validade | Reduzir para dois ciclos | Vence ao atingir três |
+| Algoritmo | Dúvida sobre Raft completo | Protocolo específico |
+| Prontidão | Etapa potencialmente manual | Automática |
+| Retomada | Possíveis três segundos + três extras | Três segundos, últimos 500 ms aceitam teclas |
+| Confirmação final | Prazo sem entrega de todos | Todos da sessão no encerramento normal |
+| Eleição | Critérios ainda genéricos | Época, posição, igualdade, voto único e prazo definidos |
 
-**Situação:** confirmada como direção de arquitetura.
+## 11. Como alterar uma decisão
 
-**Alternativas:** host fixo com encerramento controlado; lockstep entre pares; host com migração.
+Referenciar o ID, indicar regra antiga e nova, explicar o motivo, atualizar protocolo/arquitetura e acrescentar os testes afetados.
 
-**Decisão:** um host calcula os ciclos; buscamos eleger outro e recuperar a partida se ele falhar.
+Questões de formato e implementação podem ser resolvidas pela proposta inicial autorizada. Mudanças de comportamento, como relaxar quorum, permitir reentrada ou alterar a janela de teclado, precisam ser registradas como revisão real.
 
-**Por quê:** centralizar o cálculo simplifica a arbitragem de colisões. A migração permite continuar após a perda do coordenador.
-
-**Consequência:** precisamos preservar registros e definir eleição e recuperação. Trocar apenas o endereço do host não basta.
-
-**Em aberto:** não houve adoção formal de Raft completo nem fechamento de um algoritmo próprio equivalente. A maioria foi aceita; o algoritmo completo ainda exige especificação.
-
-### D04 — Ranking pela média de RTT entre jogadores
-
-**Situação:** confirmada.
-
-**Alternativas:** ping até o lobby; medições entre os pares; ordem por ID. Também foi sugerido minimizar o pior RTT, mas a escolha final foi média.
-
-**Decisão:** medir RTT entre os participantes e construir um ranking único pela média. O lobby consolida as informações durante a preparação.
-
-**Por quê:** ping até o lobby mede outro caminho de rede. O ranking deve representar as conexões da partida e ser igual para todos.
-
-**Consequência:** o ranking estabelece preferência. Histórico elegível e maioria continuam necessários. O candidato preferencial desatualizado se atualiza ou outro assume.
-
-## 4. Comandos
-
-### D05 — Validação local imediata
-
-**Situação:** confirmada.
-
-**Alternativas:** esperar resposta do host; decidir localmente na tecla e validar novamente no host.
-
-**Decisão:** decidir imediatamente se a tecla entra na fila, considerando a última direção aceita pendente. Sem pendências, considerar a direção oficial conhecida.
-
-**Por quê:** oferecer resposta imediata e permitir sequências como DIREITA → CIMA → ESQUERDA, executadas em ciclos distintos.
-
-**Consequência:** tecla rejeitada não muda a referência. Direção repetida não ocupa espaço. O host também valida.
-
-### D06 — Dois comandos pendentes
-
-**Situação:** confirmada; valor ajustável nos testes.
-
-**Alternativas:** fila longa; um ou dois pendentes; contador separado ou tamanho da estrutura.
-
-**Decisão:** até dois pendentes no total, incluindo enviados e ainda não executados. Utilizar o tamanho da estrutura de pendências como contador.
-
-**Por quê:** permitir antecipação sem acumular vários segundos de comandos antigos; evitar divergência entre contador e conteúdo.
-
-**Consequência:** fila cheia ignora a nova tecla. A aceitação pelo host não libera espaço; execução oficialmente conhecida, rejeição ou descarte encerram a pendência.
-
-### D07 — Referência do cliente e execução reservada pelo host
-
-**Situação:** confirmada.
-
-**Alternativas:** cliente determinar sozinho o ciclo; host executar conforme chegada sem registrar reserva; distinguir referência e execução.
-
-**Decisão:** o cliente informa seu ciclo de referência. O host reserva o primeiro ciclo ainda aberto, respeitando ordem, capacidade e validade.
-
-**Por quê:** reconhecer o trânsito pela rede e tornar explícito quando o comando será aplicado.
-
-**Consequência:** uma mudança de direção por jogador por ciclo. Sem comando, mantém-se a direção. O fechamento das entradas é comum a todos.
-
-### D08 — Expiração ao atingir três ciclos
-
-**Situação:** confirmada; ajustável nos testes.
-
-**Alternativas:** descartar toda referência inferior ao ciclo atual; validade de dois ciclos; validade de três.
-
-**Decisão:** descartar quando:
-
-    ciclo_de_execucao - ciclo_de_referencia >= 3
-
-**Por quê:** referências inferiores podem resultar de trânsito normal. Dois ciclos, com esse critério, impediriam executar duas curvas geradas na mesma referência.
-
-**Exemplo:** referência 42 permite execução em 43 e 44. No 45, venceu.
-
-**Consequência:** validade não é espera obrigatória. Verificar na reserva e antes da execução.
-
-### D09 — Limpar a sequência comprometida
-
-**Situação:** confirmada; reconciliação ainda precisa de formato.
-
-**Alternativas:** descartar só o comando inválido; manter os posteriores; limpar as pendências do jogador.
-
-**Decisão:** quando rejeição ou expiração comprometer a sequência, limpar as pendências daquele jogador e recomeçar.
-
-**Por quê:** comandos posteriores podem depender da curva descartada e produzir movimentos inválidos ou atrasados.
-
-**Consequência:** cliente e host precisam concordar sobre a limpeza. Uma versão da fila invalida comandos antigos em trânsito.
-
-### D10 — Limpeza na migração e tratamento do host
-
-**Situação:** confirmada.
-
-**Alternativas:** reaproveitar comandos após a pausa; descartar pendências; executar teclas locais do host diretamente.
-
-**Decisão:** migração limpa todas as pendências. O host usa a mesma validação, fila e limite dos demais.
-
-**Por quê:** evitar curvas acumuladas durante a pausa e prioridade criada pelo código.
-
-**Consequência:** permanece a vantagem natural de latência do host. Movimentos incorporados ao histórico recuperado não são comandos pendentes.
-
-### D11 — Ajustar controles por testes
-
-**Situação:** confirmada como diretriz.
-
-**Alternativas:** fixar parâmetros definitivamente; ajustar por medições.
-
-**Decisão:** manter taxa de ciclos, capacidade e validade configuráveis e medir tecla até movimento oficial.
-
-**Por quê:** reduzir atraso exige observar rede, cadência e espera na fila.
-
-**Consequência:** mudanças precisam preservar a coerência entre capacidade e validade e ser compartilhadas por todos.
-
-## 5. Ciclos e recuperação
-
-### D12 — Calcular movimentos conjuntamente
-
-**Situação:** confirmada como fluxo geral.
-
-**Alternativas:** atualizar cada moto imediatamente; calcular todos os destinos antes de alterar a arena.
-
-**Decisão:** selecionar comandos, calcular destinos, resolver colisões, aplicar efeitos e avaliar vitória ou empate.
-
-**Por quê:** impedir que a ordem de processamento favoreça um jogador.
-
-**Consequência:** os casos de colisão ficam documentados no motor e precisam de testes. As regras do enunciado não são escolhas novas da equipe.
-
-### D13 — Registrar o que foi executado
-
-**Situação:** confirmada.
-
-**Alternativas:** recuperar pelas teclas enviadas; recuperar pelos registros dos ciclos calculados.
-
-**Decisão:** manter registros ordenados de ciclos e decisões de controle, identificando comandos aplicados e seus efeitos.
-
-**Por quê:** uma tecla pode ter sido rejeitada, vencido ou não chegado. Não basta para reconstruir o resultado.
-
-**Consequência:** posição no registro e ciclo do jogo são conceitos diferentes. Não usaremos uma pilha para desfazer movimentos confirmados.
-
-### D14 — Confirmar ciclos por maioria
-
-**Situação:** confirmada em comportamento; algoritmo completo pendente.
-
-**Alternativas:** confirmar somente no final; confirmar durante a partida. Esperar todos ou obter maioria.
-
-**Decisão:** distribuir registros durante a partida, obter confirmações de armazenamento por maioria e anunciar o avanço confirmado.
-
-Confirmar até N significa armazenar toda a sequência até N.
-
-**Por quê:** permitir recuperação se o host cair durante a partida ou durante o anúncio de confirmação.
-
-**Consequência:** confirmação não é votação sobre a colisão. Com quatro votantes, maioria de três; com três, de dois. Lacunas precisam ser preenchidas.
-
-### D15 — Comparar e reconciliar os históricos
-
-**Situação:** confirmada como política; regras exatas pendentes.
-
-**Alternativas:** apagar tudo que algum participante desconheça como confirmado; impor o estado local do sucessor; comparar registros.
-
-**Decisão:** consultar participantes, recuperar registros ausentes, preservar os ciclos confirmados e resolver os pendentes.
-
-**Por quê:** o host pode ter confirmado um ciclo e caído antes de avisar todos. Não podemos apagar essa decisão.
-
-**Consequência:** o atrasado recebe os registros ausentes. Não reenviamos teclas para inventar novamente o resultado.
-
-Algo existente somente na memória do host perdido não pode ser recuperado.
-
-### D16 — Recuperar antes de retomar
-
-**Situação:** confirmada.
-
-**Alternativas:** retomar assim que houver candidato; recuperar e sincronizar primeiro.
-
-**Decisão:** eleger, recuperar, confirmar a sequência, sincronizar o estado e só depois preparar a retomada.
-
-**Por quê:** todos precisam conhecer a posição e direção de onde continuarão. Uma curva recuperada deve aparecer durante a pausa.
-
-**Consequência:** movimento recuperado não é executado novamente.
-
-**Detalhe temporal a esclarecer:** foram aceitas uma contagem de três segundos e uma janela de entrada de três segundos. A organização proposta separou as fases, totalizando seis segundos.
-
-A intenção de duas fases ou de uma única janela deve ser confirmada ao implementar a experiência de retomada.
-
-### D17 — Minimizar a latência
-
-**Situação:** confirmada como objetivo; técnicas são encaminhamentos.
-
-**Alternativas:** esperar o próximo tick para confirmar; responder assim que os registros chegam.
-
-**Decisão:** processar confirmações imediatamente, oficializar assim que houver maioria e evitar espera artificial.
-
-**Por quê:** a confirmação já acrescenta comunicação entre tecla e movimento.
-
-**Encaminhamentos:** envios sem bloquear outros pares, mensagens curtas, TCP_NODELAY e anúncio de confirmação sem reenviar toda a atualização.
-
-A escolha entre threads, selectors ou outra organização com sockets permanece de implementação.
-
-## 6. Votantes e saída
-
-### D18 — Atualizar votantes por decisão confirmada
-
-**Situação:** confirmada; procedimento completo pendente.
-
-**Alternativas:** manter os originais; atualizar por decisão confirmada; cada processo recalcular quem responde.
-
-**Decisão:** a composição faz parte do estado compartilhado e muda pelo protocolo.
-
-**Por quê:** evitar participantes ausentes presos na composição e maiorias incompatíveis.
-
-**Encaminhamento aceito na discussão:** configuração conjunta, com maiorias antiga e nova, uma mudança por vez.
-
-**Consequência:** dois votantes exigem ambos. Sem condições de aprovar a mudança, ninguém se declara uma configuração menor.
-
-### D19 — Separar eliminação e desconexão
-
-**Situação:** confirmada.
-
-**Alternativas:** eliminado desconecta; permanece espectador; escolhe sair com segurança.
-
-**Decisão:** o eliminado pode continuar assistindo ou solicitar saída. O host pode coordenar mesmo com a moto eliminada.
-
-**Por quê:** perder no jogo não equivale a falhar como participante do protocolo.
-
-**Consequência:** eliminar a moto não remove automaticamente o processo da votação.
-
-### D20 — Saída segura e transferência planejada
-
-**Situação:** confirmada.
-
-**Alternativas:** fechar imediatamente; aguardar transferência e remoção confirmadas.
-
-**Decisão:** solicitar saída e manter conexão até aprovação. O host conclui ciclo, pausa, atualiza o sucessor e transfere a liderança.
-
-**Por quê:** evitar perda de informações e permitir continuidade.
-
-**Consequência:** se cair antes de concluir, aplica-se recuperação por falha. Esperar alguns segundos não comprova transferência.
-
-### D21 — Verificação de atividade
-
-**Situação:** confirmada; timeout exato pendente.
-
-**Alternativas:** confiar apenas no TCP; interpretar ausência de comandos como falha; mensagens pequenas de atividade.
-
-**Decisão:** após três intervalos de ciclo sem comandos, enviar atividade e repetir enquanto necessário.
-
-**Por quê:** o jogador pode ficar sem teclas, e uma conexão TCP pode parecer aberta após interrupção.
-
-**Consequência:** usar relógio monotônico, inclusive nas pausas. Intervalo de envio não é timeout de desconexão. Outras mensagens válidas também demonstram atividade.
-
-### D22 — Histórico em memória
-
-**Situação:** confirmada.
-
-**Alternativas:** memória; persistência em disco ou banco.
-
-**Decisão:** guardar estado e registros dentro do aplicativo, em memória.
-
-**Por quê:** atende à recuperação entre processos ainda disponíveis sem adicionar persistência.
-
-**Consequência:** reiniciar perde essa memória. O retorno do processo à mesma partida foi apresentado como fora do escopo inicial, mas ainda precisa ser formalizado como regra.
-
-## 7. Lobby e início
-
-### D23 — Criador solicita o início
-
-**Situação:** confirmada.
-
-**Alternativas:** início automático; criador solicitar com três ou quatro.
-
-**Decisão:** o criador inicia a preparação.
-
-**Por quê:** permitir começar com três ou esperar pelo quarto sob controle do grupo.
-
-**Consequência:** criador e host são papéis independentes.
-
-### D24 — Congelar participantes na preparação
-
-**Situação:** confirmada.
-
-**Alternativas:** permitir entradas durante a preparação; congelar a tentativa.
-
-**Decisão:** fixar a lista em PREPARANDO, montar a malha, medir RTT e distribuir uma configuração compartilhada.
-
-**Por quê:** conexões, ranking e posições precisam referir-se ao mesmo conjunto.
-
-**Consequência:** tentativas têm identificações próprias. Respostas antigas não autorizam início.
-
-### D25 — Prontidão automática
-
-**Situação:** confirmada.
-
-**Alternativas:** botão manual; iniciar sem confirmação; confirmação automática.
-
-**Decisão:** cada aplicativo envia “estou pronto” após concluir conexões e preparar a configuração.
-
-O host aguarda os participantes da tentativa.
-
-**Por quê:** garantir preparação sem exigir ação extra do usuário. Enviar bytes não prova que o outro aplicativo terminou o processamento.
-
-### D26 — Queda cancela a tentativa
-
-**Situação:** confirmada.
-
-**Alternativas:** começar com os restantes se ainda houver três; cancelar e exigir nova solicitação.
-
-**Decisão:** cancelar a tentativa e permanecer PREPARANDO, mesmo com quantidade suficiente.
-
-**Por quê:** a tentativa anterior usava outra lista e configuração; o início continua sob controle do criador.
-
-**Consequência:** para receber novos jogadores, reabrir a sala. O protocolo inicial propõe CANCEL_PREPARATION.
-
-Se o criador sair, a proposta é transferir ao integrante presente mais antigo.
-
-## 8. Encerramento e evolução
-
-### D27 — Resultado global e entrega confirmada por todos
-
-**Situação:** confirmada.
-
-**Alternativas:** resultados individuais; resultado global. Fechar imediatamente; aguardar confirmações.
-
-**Decisão:** confirmar o ciclo final, distribuir resultado global e deixar cada aplicativo resolver sua apresentação.
-
-O encerramento normal aguarda confirmação de todos ainda integrantes da sessão.
-
-**Por quê:** todos usam a mesma decisão e a conexão não fecha antes da entrega.
-
-**Consequência:** timeout não é confirmação. Falhas exigem tratamento e remoção segura quando possível.
-
-A maioria confirma a decisão; todos da sessão confirmam sua entrega.
-
-### D28 — Lobby ou saída por escolha
-
-**Situação:** confirmada.
-
-**Alternativas:** retorno obrigatório; fechamento automático; escolha do usuário.
-
-**Decisão:** oferecer voltar ao lobby ou sair após o procedimento de encerramento.
-
-**Por quê:** são intenções diferentes e nenhuma deve ser imposta.
-
-**Consequência:** lobby indisponível não altera o resultado. Permitir tentar novamente ou sair.
-
-### D29 — Estados e JSONs como base inicial
-
-**Situação:** base inicial explicitamente aceita.
-
-**Alternativas:** desenho imutável; revisão conforme implementação e testes.
-
-**Decisão:** adotar os estados propostos e os JSONs iniciais do lobby, ajustando quando necessário.
-
-**Por quê:** permitir avançar com um contrato comum sem presumir que todos os casos foram descobertos.
-
-**Consequência:** atualizar documentos e implementações juntos. Os JSONs P2P ainda não foram todos discutidos e aprovados.
-
-## 9. Evidências de decisões importantes
-
-Trechos literais da conversa:
-
-| Tema | Trecho |
-|---|---|
-| TCP | “Vejo o TCP com ajustes na camada de APlicação como a melhor forma.” |
-| Capacidade | “Dois comandos pendentes está ótimo” |
-| Consumo | “O host atribui o comando conforme a fila. COnsumindo apenas 1 por jogador” |
-| Migração | “Se houver migração antes da execução, descartar todos os comandos.” |
-| Limpeza | “Aí descarta tudo da fila de comandos do jogador e rrecomeça.” |
-| Validade final | “vamos deixar em 3 ciclos mesmo então?” |
-| RTT | “sendo ranqueados através da média de RTT” |
-| Votantes dinâmicos | “A segunda é ideal por enquanto eu acredito” |
-| Memória | “isso em memória dentro do aplicativo em si” |
-| Início | “a partida deve ser iniciada pelo criador” |
-| Encerramento | “ele deve confirmar com todos aantes de finalizar” |
-| Depois da partida | “Ele deve voltar ao lobby ou sair do aplicativo, deve sr opcional” |
-
-## 10. O que ainda não está fechado
-
-Não apresentar estes itens como decisões completas:
-
-- Adoção de Raft completo ou equivalência do protocolo específico.
-- Predicado de elegibilidade e regras completas de voto e época.
-- Tratamento de todos os conflitos de registros.
-- Ativação das configurações conjunta e definitiva.
-- JSONs e transições completas P2P.
-- Timeouts, taxa de ciclos, arena, spawns e amostras de RTT.
-- Limites de mensagem e tratamento de erros estruturais.
-- Reconciliação após limpeza de fila.
-- Encerramento sem maioria.
-- Forma final da contagem e da janela de entrada.
-- Regra formal para processo reiniciado.
-
-O registro de nova liderança para confirmar o prefixo recuperado foi proposto e aceito como direção.
-
-Seu funcionamento depende das regras completas de replicação e eleição. Uma mensagem de anúncio isolada não oferece essa garantia.
-
-## 11. Como revisar uma decisão
-
-1. Referenciar seu ID.
-2. Registrar a nova escolha e o motivo.
-3. Indicar se substitui a anterior.
-4. Atualizar arquitetura.md e protocolo.md.
-5. Definir os testes afetados.
-
-Revisões já ocorridas:
-
-- Ping até o lobby foi substituído por RTT entre pares.
-- Validade de dois ciclos foi reconsiderada; ficou em três para acomodar dois comandos com a mesma referência.
-- A prontidão foi definida como automática.
-- A entrega final exige confirmação de todos ainda integrantes da sessão.
-
-Decisões confirmadas podem mudar, mas a revisão precisa ser explícita para a equipe não implementar versões diferentes.
+O trabalho restante é implementar, executar os cenários e ajustar os valores com evidências. Não confundir ter um documento detalhado com ter validado o programa.
