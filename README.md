@@ -17,7 +17,7 @@ Este projeto utiliza o [Poetry](https://python-poetry.org/) para gestão de depe
 
 1. Clone o repositório:
    ```bash
-   git clone [https://github.com/SEU_USUARIO/game-tron-redes.git](https://github.com/SEU_USUARIO/game-tron-redes.git)
+   git clone [https://github.com/tegnoue/game-tron-redes.git](https://github.com/tegnoue/game-tron-redes.git)
    cd game-tron-redes
    ```
 2. Instale as dependências (inclui `rich` para a interface e `python-dotenv`):
