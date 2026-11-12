@@ -1,49 +1,26 @@
-# Guia da documentação
+# Por onde começar
 
-Este diretório é o ponto de partida para implementar, testar e apresentar o Tron P2P.
-
-| Documento | Pergunta que responde |
+| Preciso… | Leia |
 |---|---|
-| [Arquitetura](arquitetura.md) | Como o sistema está organizado e por que funciona assim? |
-| [Glossário](glossario.md) | O que significam os termos e contadores? |
-| [Protocolo](protocolo.md) | O que enviar, validar, armazenar e fazer em cada situação? |
-| [Implementação e apresentação](implementacao.md) | Em que ordem construir e como demonstrar os requisitos? |
-| [Decisões](decisoes.md) | Quais alternativas foram discutidas e o que foi escolhido? |
+| Entender o sistema | [Arquitetura](arquitetura.md) |
+| Saber o que construir e testar nos 11 dias | [Implementação](implementacao.md) |
+| Consultar campos, mensagens e algoritmos | [Protocolo](protocolo.md) |
+| Entender um termo | [Glossário](glossario.md) |
+| Saber o que foi escolhido e por quê | [Decisões](decisoes.md) |
 
-## Ordem sugerida
+Leia arquitetura e implementação primeiro. Use o protocolo durante a programação; não é necessário ler novamente toda a especificação a cada etapa.
 
-1. Ler arquitetura e as cinco palavras iniciais do glossário.
-2. Implementar transporte, lobby e motor isoladamente.
-3. Seguir os estados e mensagens do protocolo.
-4. Acrescentar confirmação, eleição e reconfiguração, testando cada etapa.
-5. Preparar a demonstração com os cenários de implementação.
+## Regras que todos precisam lembrar
 
-Não tentar programar eleição antes de conseguir explicar comando, ciclo, registro, posição e época.
+- Contagem de 3 s; entrada apenas nos últimos 500 ms.
+- Dois comandos pendentes; expiração ao atingir três ciclos.
+- Registro confirmado é imutável e aplicado uma vez.
+- Um voto por época; ranking não substitui maioria.
+- Moto viva e processo votante são coisas diferentes.
+- Sem quorum, não reduzir a lista localmente nem inventar resultado.
 
-## Situação dos documentos
+## Alterações
 
-A versão 1 fornece um contrato inicial completo de mensagens e algoritmos para a implementação. Os valores padrão e detalhes de estrutura de código são escolhas técnicas iniciais.
+Mudar campo, estado, maioria ou interpretação de registro exige atualizar documentação, tipos compartilhados e testes juntos. Alterações incompatíveis aumentam a versão do protocolo. Valores iniciais são ajustáveis por testes; comportamentos novos precisam constar no registro de decisões.
 
-A documentação não significa que o aplicativo ou seus testes já existam. Não há afirmação de que a implementação tenha provado todas as propriedades distribuídas.
-
-O histórico de decisões preserva as escolhas feitas na discussão. Os outros arquivos descrevem diretamente o funcionamento esperado.
-
-## Regras que precisam ficar visíveis para toda a equipe
-
-- Contagem de três segundos; teclado abre só nos últimos 500 ms.
-- Até dois comandos pendentes; expiração ao atingir três ciclos.
-- Registros confirmados são imutáveis.
-- Um voto por época.
-- Votantes não são apenas motos vivas.
-- Não reduzir quorum com base em quem responde.
-- Host antigo não pode reassumir sozinho.
-- Sem quorum suficiente, parar com diagnóstico em vez de criar resultado.
-- A continuidade irrestrita após desconexões sucessivas não é garantida; veja o limite na arquitetura.
-
-## Como alterar o contrato
-
-Uma correção deve atualizar os documentos, os tipos compartilhados e os testes afetados no mesmo trabalho. Se alterar um campo incompatível com os participantes existentes, aumentar a versão.
-
-Antes de implementar uma solução local para uma dúvida, verificar se ela muda um estado, uma mensagem, uma maioria ou a interpretação de um registro. Se mudar, precisa ser compartilhada com a equipe.
-
-As referências externas úteis são as documentações de socket, selectors, queue, threading, json, hashlib, time e unittest da biblioteca padrão do Python. Bibliotecas que automatizem o multiplayer, RPC ou a sincronização não substituem o protocolo deste trabalho.
+Os documentos são um contrato de implementação, não evidência de que o código já funciona. Consulte a biblioteca padrão do Python: socket, selectors, queue, threading, json, hashlib, time e unittest.
