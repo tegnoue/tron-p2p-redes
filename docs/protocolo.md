@@ -1,6 +1,10 @@
 # Protocolo de aplicação TAPP — versão 1
 
-Este é o contrato inicial de implementação do Tron P2P. Define mensagens, tipos, estados e ações. Os valores padrão são pontos de partida para testes. Mudanças de campos ou semântica precisam atualizar todos os processos e a versão quando houver incompatibilidade.
+Este documento define o contrato de comunicação do Tron P2P. O sistema deve transmitir as mensagens, validar os campos e executar as transições descritas nas seções seguintes. Os valores padrão são iniciais e devem ser avaliados em testes. Alterações incompatíveis de campo ou significado exigem atualização da versão e de todos os participantes.
+
+O lobby organiza salas; os jogadores executam a partida diretamente. Um host propõe os resultados, e os demais guardam cópias. Um comando é a solicitação de curva de um jogador. Um ciclo é o passo em que as motos avançam. Um registro representa o resultado desse ciclo ou uma decisão de controle. A posição numera o histórico global; a época identifica a tentativa de liderança.
+
+Um registro recebido ainda pode ser provisório. Sua confirmação exige quorum, isto é, a maioria da configuração válida. Depois de confirmado, ele pode ser aplicado ao estado oficial, uma única vez. Nas mudanças dos votantes, são exigidas as maiorias antiga e nova. A distinção entre receber, confirmar e aplicar é essencial para interpretar os campos.
 
 O protocolo é específico para a partida. Sua segurança depende do conjunto das regras, especialmente voto único por época, prefixo do histórico, confirmação na época atual e configuração conjunta. Não é suficiente implementar apenas os exemplos JSON.
 
@@ -148,7 +152,7 @@ Com três jogadores, usar os três primeiros pontos. Gravar o resultado, não ex
 
 ### 2.5. Serialização para hashes
 
-Use JSON canônico para os objetos que entram em hash:
+Os objetos usados em hash devem ser serializados de forma canônica, para produzir os mesmos bytes em processos diferentes:
 
 ~~~python
 json.dumps(
@@ -167,6 +171,8 @@ Arrays que representam conjuntos são ordenados: IDs lexicograficamente; célula
 config_hash = SHA256(JSON canônico de MatchConfig).
 
 ## 3. Lobby
+
+A sessão de lobby identifica o jogador e sua sala. O criador controla o pedido de início, mas não necessariamente será o host. A lista de participantes fica congelada durante uma tentativa de preparação. O lobby deve distribuir a mesma configuração; depois do início confirmado, sua disponibilidade deixa de ser necessária ao jogo.
 
 O lobby serializa alterações de salas para impedir quinta entrada ou início concorrente. O estado de conexão antes de REGISTER não permite outras operações.
 
@@ -223,6 +229,8 @@ READY {config_hash, last_index: 0, last_hash: hash de INIT} é enviado automatic
 O host espera READY de todos, confirma EPOCH_START e faz a sincronização inicial. READY não é um botão da interface.
 
 ## 5. Histórico e registros
+
+O histórico é a sequência compartilhada de decisões. Ele não é um arquivo de diagnóstico nem a lista de teclas enviadas. A posição 58, por exemplo, pode guardar o resultado do ciclo 43 com movimentos de vários jogadores; a posição 59 pode mudar os votantes sem avançar o ciclo. Cada registro deve referenciar o anterior para permitir a verificação dessa sequência.
 
 ### 5.1. Estrutura
 
@@ -291,6 +299,10 @@ START usa round_id somente para o início. Retomadas usam round_id novo nos even
 
 ## 6. APPEND e confirmação
 
+APPEND distribui os registros. APPEND_RESULT informa até onde o receptor os guardou com continuidade. COMMIT anuncia o trecho que o líder confirmou. O receptor deve armazenar antes de responder; o líder deve conferir identidade e conteúdo antes de contar a resposta.
+
+Confirmar até N implica possuir todo o prefixo até N. O processo deve manter commit_index, a maior posição conhecida como confirmada, e last_applied, a maior posição já incorporada à arena. A aplicação não pode ultrapassar a confirmação nem repetir um registro.
+
 ### 6.1. Mensagens
 
 | Tipo | Payload |
@@ -340,6 +352,10 @@ O ACK do próprio líder é sua cópia em memória. Não aguardar tick para envi
 Se N for confirmado, seu prefixo também é. Isso preserva registros antigos recuperados quando EPOCH_START da nova época é replicado.
 
 ## 7. Eleição
+
+A eleição determina quem pode propor registros depois de uma falha ou transferência. O ranking estabelece uma preferência, mas a autoridade exige votos. A época distingue tentativas para que mensagens da liderança anterior não sejam confundidas com as atuais.
+
+O histórico elegível é comparado pela época do último registro e depois por sua posição. A época do pedido de eleição não torna o histórico mais recente: os registros mantêm a época em que foram produzidos. Históricos iguais permitem voto.
 
 ### 7.1. Contexto e fila
 
@@ -396,6 +412,10 @@ Receber uma época maior atualiza o slot, mas não reinicia o prazo total do mes
 Ao obter quorum, anunciar LEADER, reconciliar os logs e acrescentar EPOCH_START. Não gerar CYCLE antes de confirmar esse registro e sincronizar os participantes. Se recuperar resultado terminal, seguir diretamente sua entrega e fechamento, sem contagem ou novos movimentos.
 
 ## 8. Configuração dos votantes
+
+Votantes são processos autorizados a participar de eleições e confirmações. Essa condição é independente de a moto estar viva. A lista não deve ser recalculada conforme os sockets que respondem, pois grupos diferentes poderiam formar maiorias incompatíveis.
+
+A configuração conjunta é uma transição entre duas listas. Uma decisão nessa fase precisa da maioria de cada lista; um mesmo ID pode contar em ambas. O contrato mantém essa exigência até a conclusão confirmada.
 
 Apenas remoções são permitidas durante a partida; não há adição ou reentrada.
 
@@ -454,6 +474,10 @@ No ponto de fechamento de cada ciclo, congelar a seleção de todos os jogadores
 A geração de nova época limpa filas, bloqueia entrada e invalida todos os MOVE anteriores. Não apagar registros recuperáveis.
 
 ## 10. Snapshot, prontidão e contagem
+
+O snapshot é a representação completa de uma base confirmada: arena, motos, resultado e votantes. Sua âncora identifica a posição, época e hash do histórico correspondente. O receptor deve conferir essa ligação antes de instalar o estado.
+
+A contagem dura três segundos. A entrada abre somente nos últimos 500 ms, com as motos ainda paradas. Os comandos aceitos nesse período devem permanecer para os ciclos seguintes. O host anuncia as fases pelo relógio monotônico; não se pressupõe sincronização perfeita entre máquinas.
 
 SnapshotState = {cycle, width, height, bikes: array de Bike, occupied: array de Cell, result: Result, config_version, voters: array de ID}.
 
@@ -612,4 +636,4 @@ Todos os prazos usam relógio monotônico. Valores experimentais não autorizam 
 - Encerrar sem bloquear indefinidamente.
 - Medir a latência e demonstrar limites do quorum.
 
-Os testes de [implementacao.md](implementacao.md) são parte da conclusão do projeto. Esta especificação não substitui execução, análise de falhas nem demonstração.
+Os testes de integração devem incluir falha antes de distribuir, após armazenamento parcial, após quorum e durante o anúncio de confirmação. Também devem verificar snapshot, transição de votantes, comandos antigos e entrega do resultado. Esta especificação não substitui execução, análise de falhas nem demonstração.

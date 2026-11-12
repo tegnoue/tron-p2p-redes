@@ -1,32 +1,45 @@
-# Implementação em 11 dias
+# Implementação, testes e apresentação
 
-Objetivo: integrar cedo e reservar tempo para falhas e execução em máquinas distintas. Os comandos abaixo são a interface a construir, não código já disponível.
+Este guia descreve a construção do aplicativo por entregas verificáveis. O sistema deve funcionar com um processo de lobby e três ou quatro processos de jogadores. O host é o jogador que calcula os movimentos; os demais guardam cópias e podem votar em uma troca de liderança. Uma moto eliminada não implica encerramento de seu processo.
 
-## 1. Plano de trabalho
+Um comando é um pedido de curva. Um ciclo é um passo de movimento. Um registro guarda o resultado de um ciclo ou uma decisão de controle. A posição numera esses registros; a época identifica uma tentativa de liderança. O código deve manter esses valores separados.
 
-| Dias | Entrega | Critério de conclusão |
+As mensagens devem ser delimitadas por LF sobre TCP. Cada processo deve distinguir registro recebido, confirmado por quorum e aplicado à arena. Quorum significa a quantidade de votos ou cópias exigida: três de quatro, dois de três e ambos numa configuração de dois. Esses conceitos orientam as etapas abaixo.
+
+Os comandos de execução representam a interface a construir, não módulos já validados.
+
+## Plano para os 11 dias
+
+| Dias | Entrega | Resultado verificável |
 |---|---|---|
-| 1–2 | Codec TCP, configuração, lobby e motor isolado | Mensagens fragmentadas funcionam; salas e colisões testadas |
-| 3–4 | Malha, RTT, READY, teclado e host fixo | Partida com três/quatro processos, inclusive em máquinas distintas |
-| 5–6 | Histórico, ACK, confirmação e filas | Ciclos aplicados uma vez; expiração e limpeza corretas |
-| 7–8 | Eleição, recuperação e snapshot | Queda antes/depois de quorum preserva prefixo confirmado |
-| 9 | Reconfiguração e transferência | Saída voluntária e mudança de votantes sem quorum local inventado |
-| 10–11 | Integração, medições e apresentação | Encerramento, lobby ausente e cenários de falha demonstrados |
+| 1–2 | Codec, configuração, lobby e motor | Framing, salas e colisões testados |
+| 3–4 | Malha, RTT, prontidão e host fixo | Partida entre processos, inclusive em máquinas distintas |
+| 5–6 | Histórico, confirmação e comandos | Registros aplicados uma vez e filas reconciliadas |
+| 7–8 | Eleição, recuperação e snapshot | Prefixo confirmado preservado após falhas |
+| 9 | Votantes e transferência | Saída aprovada sem recálculo local de maioria |
+| 10–11 | Integração e apresentação | Falhas, métricas e limitações demonstradas |
 
-Não esperar a interface completa para testar rede. Não começar eleição antes de explicar comando, ciclo, registro, posição e época.
+A integração deve ocorrer desde as primeiras entregas. A etapa seguinte só deve assumir garantias que a anterior já consiga verificar.
 
-## 2. Ambiente e organização
+## 1. Ambiente e execução
 
-Python + Poetry. Usar socket, selectors ou threads, queue, json, hashlib, uuid, time e unittest. Rich/python-dotenv podem auxiliar; não substituir o protocolo por framework de multiplayer ou RPC.
+O projeto deve utilizar Python e Poetry. Sockets, selectors, threading, queue, json, hashlib, uuid, time e unittest estão na biblioteca padrão.
+
+Bibliotecas como rich e python-dotenv podem auxiliar terminal e configuração. Uma biblioteca externa não deve implementar o multiplayer ou o consenso no lugar do protocolo.
 
 Interface desejada:
+
 ~~~bash
 poetry install
 poetry run python -m src.lobby
 poetry run python -m src.node --name Ana --peer-port 6001
+poetry run python -m src.node --name Bruno --peer-port 6002
+poetry run python -m src.node --name Carla --peer-port 6003
 ~~~
 
-Repetir o último comando com outros nomes/portas. Precedência: argumento CLI → variável de ambiente → padrão.
+A interface de linha de comando deve aceitar opções equivalentes para lobby host/port, bind host, endereço anunciado e peer port. Precedência: argumento de linha de comando, variável de ambiente, padrão local.
+
+Configuração inicial sugerida:
 
 ~~~dotenv
 LOBBY_HOST=127.0.0.1
@@ -36,77 +49,360 @@ PEER_ADVERTISE_HOST=127.0.0.1
 PEER_PORT=6001
 ~~~
 
-Em máquinas distintas, usar IPs reais alcançáveis. Lobby também aceita bind configurável; processos na mesma máquina usam portas diferentes.
+Em máquinas diferentes, LOBBY_HOST é o IP real do servidor; cada PEER_ADVERTISE_HOST é o IP alcançável daquele jogador. Vários processos na mesma máquina usam portas diferentes.
 
-| Diretório | Arquivos sugeridos |
-|---|---|
-| core | config, codec, messages, hashing, types |
-| lobby | server, rooms, __main__ |
-| game | state, engine |
-| node | network, session, commands, replication, election, membership, ui, __main__ |
-| tests | codec, engine, commands, replication, election, membership, scenarios |
+O lobby também deve aceitar host/port configuráveis para bind.
 
-Nomes são orientação; evitar monólitos e abstrações prematuras. Um laço de sessão é dono dos dados; rede/teclado entregam MESSAGE, KEY, SOCKET_CLOSED, TIMER e USER_ACTION por filas. Serializar escritas por conexão. Fila acima de MAX_SEND_QUEUE_BYTES gera falha de par lento, nunca descarte silencioso de registro.
+## 2. Estrutura sugerida
 
-## 3. Núcleo da implementação
+~~~text
+src/
+  core/
+    config.py
+    codec.py
+    messages.py
+    hashing.py
+    types.py
+  lobby/
+    __main__.py
+    server.py
+    rooms.py
+  game/
+    state.py
+    engine.py
+  node/
+    __main__.py
+    network.py
+    session.py
+    commands.py
+    replication.py
+    election.py
+    membership.py
+    ui.py
+tests/
+  test_codec.py
+  test_engine.py
+  test_commands.py
+  test_replication.py
+  test_election.py
+  test_membership.py
+  test_scenarios.py
+~~~
 
-### Transporte
+Os arquivos representam responsabilidades, sem exigir uma classe por arquivo. A divisão deve evitar tanto um módulo único excessivo quanto abstrações que ainda não tenham função no fluxo.
+
+## 3. Dono do estado e eventos
+
+Uma thread ou laço é o único dono de arena, filas, época, votos, histórico e configuração.
+
+Outras threads podem:
+- receber bytes e entregar mensagens;
+- capturar teclado e entregar teclas;
+- desenhar uma cópia imutável do estado.
+
+Elas não alteram diretamente os dados do protocolo.
+
+Eventos internos sugeridos:
+MESSAGE(peer_id,message), KEY(direction), SOCKET_CLOSED(peer_id), TIMER(name), USER_ACTION(action).
+
+A rede usa selectors ou threads por conexão. Em qualquer opção, o envio é serializado por conexão: duas threads nunca intercalam bytes de JSON diferentes.
+
+Uma fila de envio acima de MAX_SEND_QUEUE_BYTES gera falha de par lento. Não descartar silenciosamente registros ou metade de uma mensagem.
+
+## 4. Primeira entrega: codec TCP
+
+O codec deve ser implementado antes do jogo, pois toda comunicação depende de sua delimitação correta.
 
 ~~~python
 def encode_message(message):
-    text = json.dumps(message, ensure_ascii=False,
-                      separators=(",", ":"), allow_nan=False)
+    text = json.dumps(
+        message, ensure_ascii=False,
+        separators=(",", ":"), allow_nan=False,
+    )
     return text.encode("utf-8") + bytes([10])
 ~~~
 
-No decoder: acumular bytes → extrair LF → validar limite → decodificar/validar → entregar mensagens → preservar sobra. Nunca usar json.loads(conn.recv(1024)).
+O decoder precisa:
+1. Acrescentar bytes ao buffer.
+2. Localizar todos os LF completos.
+3. Validar tamanho.
+4. Decodificar cada linha e validar JSON/envelope.
+5. Entregar as mensagens completas.
+6. Preservar o restante.
 
-### Motor e comandos
+O receptor não deve executar json.loads(conn.recv(1024)) diretamente: TCP não preserva os limites de uma mensagem entre chamadas a recv.
 
-Estado sugerido: occupied[(x,y)] = owner_id; bikes[player_id] = Bike; cycle e result. step não conhece rede.
+Critérios:
+- Uma mensagem dividida em qualquer byte funciona.
+- Três mensagens numa leitura funcionam.
+- UTF-8 dividido entre leituras funciona.
+- Linha inválida ou grande tem comportamento definido.
+- Fechamento de conexão não vira laço infinito de recv vazio.
 
-Cliente: validar tecla/fase → conferir duas pendências → criar sequência/referência → guardar e enviar.
-Host: validar → reservar primeiro ciclo livre → rejeitar/resetar se idade >= 3 → guardar e responder.
-Ao aplicar CYCLE confirmado, atualizar arena e remover os CommandRef executados. MOVE_ACCEPTED não libera espaço.
+## 5. Segunda entrega: lobby e preparação
 
-Cada fila do host guarda versão, espera de reset ACK, sequência e até duas reservas. Mensagens antigas não recriam comandos.
+O lobby deve implementar registro, salas e autorização do criador.
 
-### Histórico
+Verificar:
+- Quinto jogador não entra, inclusive em operações concorrentes.
+- Jogador não participa de duas salas.
+- Não criador não inicia.
+- Dois jogadores não iniciam.
+- Sala em PREPARANDO não aceita JOIN.
+- Criador ausente é substituído pelo presente mais antigo.
+- Queda durante preparação cancela, mesmo com três restantes.
+- CANCEL_PREPARATION permite receber novo participante.
 
-Guardar current_epoch, voted_for, leader_id, log, commit_index, last_applied, configuração e, no host, next_index/match_index por par.
+A entrega deve acrescentar malha, medições de RTT, configuração e READY. O primeiro teste deve usar três processos na mesma máquina; a integração seguinte deve utilizar máquinas distintas.
 
-Líder: criar registro encadeado → guardar → distribuir → validar ACKs → confirmar se registro atual e quorum correto → aplicar e anunciar.
-Receptor: validar líder/época/prefixo → tratar somente conflito provisório → guardar → responder → aplicar apenas o confirmado.
+A eleição depende de ranking, participantes e configuração iguais. Esses dados devem estar estáveis antes de integrar a troca de liderança.
 
-Não contar “três respostas” sem conferir IDs, hash, época e configuração. Configuração aplicada e conservadora têm funções distintas; veja [protocolo](protocolo.md).
+## 6. Terceira entrega: motor isolado
 
-### Tempo e diagnóstico
+Representação possível:
+- occupied: mapa (x,y) → owner_id;
+- bikes: mapa player_id → Bike;
+- cycle: inteiro;
+- result: Result.
 
-Usar time.monotonic_ns e deadlines, sem sleep de 3 s no laço de rede. Abrir teclado em t0+2500 ms, terminar em t0+3000 ms. Round antigo não reinicia timers. Ciclo atrasado não gera rajada para compensar.
+A função step deve devolver novo estado e resultado do ciclo, sem sockets.
 
-Logar event, match_id, player_id, epoch, index, cycle e config_version. Medir no cliente tecla→execução oficial; no host recepção→reserva→cálculo→quorum. Não subtrair relógios de máquinas diferentes.
+Testes indispensáveis:
+- Uma moto avança exatamente uma célula.
+- Inversão não é aplicada.
+- Todas as motos usam a ocupação anterior para verificar rastros.
+- Mesma célula elimina todas.
+- Troca de posições elimina ambas.
+- Rastro de eliminado permanece.
+- Parede não produz coordenada inválida na matriz.
+- Últimas motos eliminadas juntas produzem empate.
+- Ordem de iteração dos IDs não muda o resultado.
+- PLAYER_LEFT não desloca as outras motos.
 
-## 4. Testes indispensáveis
+Os testes do motor devem usar uma arena pequena e entradas controladas, sem depender da interface.
 
-| Área | Casos |
+## 7. Quarta entrega: comandos
+
+O cliente deve guardar um OrderedDict ou estrutura equivalente para os pendentes do cliente, identificados por CommandRef.
+
+No host, cada jogador tem:
+- versão da fila;
+- estado aguardando reset ACK;
+- sequência recebida;
+- até duas reservas (execution_cycle,command).
+
+Pseudocódigo:
+
+~~~text
+ao receber tecla:
+    se fase não aceita entrada ou moto morreu: ignorar
+    se dois pendentes: ignorar
+    referência = última direção pendente ou direção oficial
+    se tecla igual ou oposta à referência: ignorar
+    criar comando com sequência nova e ciclo oficial conhecido
+    adicionar aos pendentes
+    enviar MOVE_INTENT
+
+ao receber comando no host:
+    validar contexto, versão, sequência e moto
+    reservar primeiro ciclo livre daquele jogador
+    se idade >= 3: limpar a fila pelo protocolo
+    senão guardar reserva e enviar MOVE_ACCEPTED
+
+ao aplicar registro CYCLE confirmado:
+    atualizar arena
+    remover pendências referenciadas em moves
+~~~
+
+MOVE_ACCEPTED não deve liberar capacidade da fila.
+
+Testar limpeza com mensagens antigas ainda em trânsito. Testar duas curvas com a mesma referência: primeira no ciclo seguinte, segunda no posterior.
+
+## 8. Quinta entrega: histórico e replicação
+
+A replicação deve ser integrada primeiro com host fixo. Isso permite verificar os registros antes de acrescentar eleição.
+
+Variáveis mínimas:
+current_epoch, voted_for, leader_id, log, commit_index, last_applied,
+next_index, match_index, configuration.
+
+Pseudocódigo do líder:
+
+~~~text
+produzir decisão:
+    construir registro usando último hash
+    guardar na memória
+    atualizar a própria posição armazenada
+    enviar APPEND aos pares
+
+ao receber APPEND_RESULT:
+    verificar época, hash, configuração e identidade
+    atualizar posição daquele par
+    procurar posição atual com quorum apropriado
+    se puder confirmar:
+        avançar commit_index
+        aplicar prefixo ainda não aplicado
+        anunciar COMMIT
+~~~
+
+Pseudocódigo do receptor:
+
+~~~text
+ao receber APPEND:
+    conferir líder e época
+    conferir âncora anterior
+    verificar hashes e continuidade
+    substituir somente sufixo provisório conflitante
+    armazenar
+    responder
+    aplicar somente até a posição confirmada e validada
+~~~
+
+A contagem deve verificar quem respondeu, qual registro foi armazenado e qual configuração se aplica. Três mensagens, por si só, não comprovam quorum.
+
+A confirmação de uma entrada atual pode confirmar o prefixo antigo. Não confirmar entrada antiga diretamente só porque aparece em duas telas.
+
+## 9. Sexta entrega: eleição e recuperação
+
+Os primeiros testes da eleição devem verificar votos e épocas sem depender da interface.
+
+Casos:
+- Dois pedidos diferentes na mesma época: no máximo um voto concedido.
+- Candidato igual em frescor: pode receber voto.
+- Candidato com último registro de época menor: não vence a comparação só por ter mais posições.
+- Candidato com época eleitoral nova não reescreve seu histórico.
+- APPEND antigo não recupera autoridade.
+- Host isolado não confirma sozinho.
+- Candidato indisponível dá lugar ao próximo slot.
+- Prazo total acaba sem laço infinito.
+
+Depois simular:
+1. Host calcula mas não distribui.
+2. Distribui só a um.
+3. Obtém quorum mas não anuncia.
+4. Anuncia a um e cai.
+5. Cai durante snapshot.
+6. Cai nos primeiros 2,5 s da contagem.
+7. Cai na janela de 500 ms.
+8. Cai durante transferência.
+
+O oráculo do teste compara registros confirmados por posição. Participantes podem conhecer comprimentos diferentes; posições confirmadas em comum não podem diferir.
+
+Uma implementação útil de simulador mantém uma fila de mensagens em memória e permite entregar, atrasar ou descartar conexões entre processos simulados. Ele não substitui testes com sockets reais.
+
+## 10. Sétima entrega: configuração dos votantes
+
+Testar quatro para três e três para dois.
+
+Durante a fase conjunta:
+- ACK de participante novo/antigo é contado nas listas corretas.
+- CONFIG_FINAL ainda precisa das duas maiorias.
+- Uma mensagem de configuração antiga não relaxa a exigência.
+- Outra alteração não começa.
+- Falha no meio não apaga CONFIG_JOINT confirmado.
+- Sem quorum, não remover localmente alguém para destravar.
+
+Todos os snapshots de retomada têm configuração simples; terminar a transição antes de criar a base.
+
+Cenário de limite: dois votantes e uma falha. O resultado esperado é encerramento controlado por falta de quorum, não vitória automática.
+
+## 11. Encerramento
+
+Verificar:
+- MATCH_OVER corresponde a registro terminal confirmado.
+- Cliente atrasado busca o log antes de ACK.
+- Host espera todos ainda integrantes.
+- Timeout não é entrega.
+- Saída normal não fecha a conexão prematuramente.
+- Host cai após entrega parcial: o resultado é recuperado se houver condições.
+- Resultado já conhecido permanece mesmo se transporte fechar.
+- Lobby desligado não impede encerrar ou sair.
+- Retornar ao lobby é escolha do usuário.
+
+## 12. Temporizadores sem travar o aplicativo
+
+Os temporizadores devem usar time.monotonic_ns e prazos. O laço de sockets não deve ser bloqueado por sleep durante a contagem.
+
+O laço calcula o próximo deadline e processa eventos até ele. COUNTDOWN começa em t0:
+- abrir entrada em t0 + 2500 ms;
+- terminar em t0 + 3000 ms.
+
+Contagem tem round_id. Eventos atrasados de uma contagem anterior são ignorados.
+
+Se um ciclo não foi confirmado a tempo, não produzir uma rajada de movimentos para alcançar o relógio. Pausar, manter tráfego de rede e resolver a causa.
+
+## 13. Diagnóstico e métricas
+
+Logs estruturados por linha, por exemplo:
+
+~~~json
+{
+  "event": "commit_advanced",
+  "match_id": "m1",
+  "player_id": "p1",
+  "epoch": 2,
+  "index": 59,
+  "cycle": 43,
+  "config_version": 1
+}
+~~~
+
+As métricas devem distinguir index de cycle.
+
+Medir no cliente:
+- instante local da tecla aceita;
+- instante local de recebimento/aplicação da execução;
+- diferença total.
+
+Medir no host:
+- recepção do comando;
+- reserva;
+- cálculo do ciclo;
+- obtenção de quorum.
+
+A análise não deve subtrair relógios de máquinas diferentes sem sincronização. Medições locais e RTT são suficientes para a avaliação inicial.
+
+## 14. Plano de demonstração
+
+| Demonstração | O que explica |
 |---|---|
-| Codec | Fragmentação em qualquer byte, várias mensagens juntas, UTF-8 dividido, linha inválida/grande, recv vazio sem laço infinito |
-| Lobby | Quinta entrada concorrente, duas salas por jogador, início por não criador/com dois jogadores, JOIN em PREPARANDO, herança do criador, cancelar/reabrir, queda mesmo com três restantes |
-| Motor | Uma célula/ciclo, inversão, ocupação anterior, destinos iguais, troca de posições, rastro de morto, parede sem célula inválida, empate, ordem dos IDs irrelevante, PLAYER_LEFT sem mover demais |
-| Comandos | Duas curvas na mesma referência, fila cheia, expiração, ACK de aceitação sem liberar capacidade, limpeza com mensagens antigas em trânsito |
-| Replicação | Lacuna, ACK duplicado/errado, registro provisório, imutabilidade confirmada, aplicação única, confirmação do prefixo por entrada atual |
-| Eleição | Um voto/época, frescor igual/menor, época nova sem reescrever log, autoridade antiga, isolamento do host, candidato ausente, prazo total |
-| Configuração | 4→3 e 3→2; duas maiorias até final; versão antiga não relaxa; uma transição; falha no meio; dois votantes/uma falha encerra |
-| Encerramento | Terminal confirmado, cliente atrasado antes do ACK, todos da sessão, timeout sem entrega, saída prematura, host cai na entrega, lobby ausente e resultado preservado |
+| Lobby e três processos | Descoberta, portas e isolamento de processos |
+| Quarto entra; quinto é recusado | Capacidade e estado da sala |
+| Criador inicia; READY automático | Preparação compartilhada |
+| Contagem com teclado só no final | Temporizadores e comandos |
+| Colisão simultânea | Motor determinístico |
+| Lobby desligado durante jogo | Independência do plano de jogo |
+| Jogador comum encerra | Suspeita, eliminação e configuração |
+| Host encerra | Eleição, época e recuperação |
+| Host sai voluntariamente | Transferência e autorização de saída |
+| Dois votantes, um falha | Limite do quorum e encerramento controlado |
+| Jogo termina, lobby ausente | Resultado independente e escolha de saída |
 
-Injetar queda do host: antes de distribuir; após um destinatário; após quorum; após anúncio parcial; durante snapshot; primeiros 2,5 s; janela de 500 ms; transferência. Comparar posições confirmadas comuns entre processos: conteúdos não podem diferir.
+Preparar injeções de falha controladas para pausar o host depois de APPEND e antes de COMMIT. Matar o processo em um momento aleatório não demonstra todos os casos.
 
-Um simulador com fila de mensagens permite atrasar/entregar eventos de forma reproduzível. Complementar com sockets reais; matar processo aleatoriamente não cobre todos os pontos.
+## 15. O que cada integrante deve conseguir explicar
 
-## 5. Demonstração e entrega
+1. Por que um recv não equivale a uma mensagem.
+2. Por que ausência de tecla não significa falha.
+3. Por que fila local e fila autoritária precisam se reconciliar.
+4. Por que dois comandos não significam duas curvas no mesmo ciclo.
+5. Por que “aceito” não é “executado” nem “confirmado”.
+6. Por que época não é ciclo.
+7. Por que o ranking não basta para ser host.
+8. Como uma cópia de registro desconhecida por outros ajuda a recuperar.
+9. Por que configuração de votantes é uma decisão compartilhada.
+10. Qual garantia o projeto mantém quando perde continuidade.
 
-Demonstrar: três processos; quarto entra/quinto recusa; criador e READY; janela final; colisão simultânea; lobby desligado; saída comum; queda do host; transferência voluntária; falta de quorum; encerramento com lobby ausente.
+## 16. Definição de pronto
 
-Cada integrante deve explicar framing/timeout, fila e reserva, cálculo simultâneo, os cinco termos do glossário, aceito × armazenado × confirmado × aplicado, ranking × voto, recuperação e limite do quorum.
+Um módulo está pronto quando possui comportamento verificável, tratamento de erro e integração documentada.
 
-Concluir com testes de módulos e falhas, execução entre máquinas, métricas de atraso, comandos realmente disponíveis e documentação alinhada ao código. Calibrar valores com evidências; mudar capacidade/idade exige revisar reservas e testes. A documentação não substitui essa validação.
+A entrega completa exige:
+- testes unitários do motor, codec, filas e quorum;
+- cenários de falha entre cada etapa relevante;
+- execução real em máquinas distintas;
+- métricas iniciais de latência;
+- protocolo atualizado com o código;
+- limitações demonstradas sem alegar garantia não testada.
+
+Os valores padrão podem mudar pelos resultados. Se mudar pending_limit ou a idade, revisar os testes que dependem da capacidade e da reserva.
