@@ -1,143 +1,111 @@
-# Registro de decisões — Tron P2P
+# Decisões do projeto
 
-## 1. Como usar este arquivo
+Registro das escolhas feitas na discussão. **Confirmada**: aceita pelo grupo. **Base inicial**: adotada para implementar e ajustar. Detalhes preenchidos pela especificação não são atribuídos ao grupo.
 
-Este registro permite à equipe acompanhar as escolhas feitas na discussão, as alternativas consideradas e os motivos. Os outros documentos descrevem diretamente o contrato técnico.
+Requisitos do professor — lobby, comunicação direta, três/quatro jogadores iniciais, processos separados, sockets, configuração e resultado consistente — não são escolhas livres.
 
-- **Confirmada:** decisão explicitamente aceita, inclusive como parte de uma proposta.
-- **Base inicial:** organização aceita para implementar e ajustar.
-- **Escolha técnica inicial:** detalhe preenchido na especificação para tornar possível implementar; não é apresentado como fala ou decisão explícita do grupo.
-- Aprovar uma ideia de arquitetura não significa que sua implementação distribuída esteja testada.
+## 1. Rede e autoridade — confirmadas
 
-Requisitos do professor não são alternativas livres: lobby, comunicação direta, três ou quatro jogadores no início, processos separados, sockets, configuração e concordância do resultado são obrigações.
-
-## 2. Rede e autoridade
-
-| ID | Alternativas consideradas | Decisão e situação | Motivo e consequência |
+| ID | Alternativas | Escolha | Motivo/efeito |
 |---|---|---|---|
-| D01 | TCP; UDP com confiabilidade e ordem na aplicação | **Confirmada:** TCP no lobby e no jogo | Menor escopo de comunicação para poucos processos. A aplicação ainda precisa de framing, filas e prazos. |
-| D02 | Conectar apenas ao host; malha completa | **Confirmada:** malha completa, uma conexão por par | Facilita recuperação e comunicação entre sucessores. Quatro jogadores usam seis conexões. |
-| D03 | Host fixo; lockstep; host com migração | **Confirmada:** host autoritário com eleição e recuperação | Cálculo central facilita arbitragem, com possibilidade de continuar após falha. |
-| D04 | Raft completo; protocolo específico | **Confirmada:** protocolo específico para este jogo | Raft completo foi considerado complexo para o escopo. Usaremos regras conhecidas de voto, época, log e maioria, sem alegar equivalência automática a Raft. |
-| D05 | Ping até lobby; RTT entre pares; ordem por ID | **Confirmada:** ranking único pela média de RTT entre pares | A rede relevante é a da partida. O lobby consolida a preferência; votação continua obrigatória. |
+| D01 | TCP / UDP com confiabilidade na aplicação | TCP | Menor escopo; ainda exige framing, fila e prazo |
+| D02 | Só host / malha completa | Malha, uma conexão por par | Sucessores já se comunicam; seis conexões com quatro |
+| D03 | Host fixo / lockstep / migração | Host autoritário com recuperação | Arbitragem simples com possibilidade de continuidade |
+| D04 | Raft completo / protocolo específico | Protocolo específico | Escopo acadêmico; usa regras conhecidas sem alegar equivalência automática a Raft |
+| D05 | Ping ao lobby / RTT dos pares / IDs | Média de RTT entre pares | Mede a rede real; ranking único não substitui votos |
 
-O início usa a porta P2P aberta e identificada. O menor ID inicia cada conexão. Essa foi uma convenção técnica aceita para evitar duplicatas.
+Convenção aceita: porta P2P aberta antes de registrar; menor ID inicia a conexão.
 
-## 3. Comandos
+## 2. Comandos — confirmadas
 
-| ID | Alternativas consideradas | Decisão e situação | Motivo e consequência |
+| ID | Alternativas | Escolha | Motivo/efeito |
 |---|---|---|---|
-| D06 | Esperar o host; validar na tecla | **Confirmada:** validação local imediata pela última direção aceita | Responsividade e sequência de curvas coerente. Tecla rejeitada não altera a referência. |
-| D07 | Fila longa; um ou dois pendentes | **Confirmada:** dois pendentes no total | Permite antecipação sem acumular comandos por muitos segundos. Inclui enviados e não executados. |
-| D08 | Contador separado; tamanho da estrutura | **Confirmada:** usar tamanho da fila de pendências | Evita divergência entre quantidade e conteúdo. Aceitação não libera espaço. |
-| D09 | Cliente escolher execução; host reservar | **Confirmada:** referência do cliente e reserva pelo host | Separa momento da solicitação e aplicação real; no máximo uma curva por jogador por ciclo. |
-| D10 | Rejeitar referência menor; vencer em dois ou três ciclos | **Confirmada:** vence ao atingir três ciclos | Dois ciclos, no critério de idade >= limite, impediriam duas curvas com a mesma referência. |
-| D11 | Descartar só o inválido; manter resto; limpar sequência | **Confirmada:** limpar pendências quando perderem contexto | Evita curvas que dependiam da descartada e sensação de comandos antigos. |
-| D12 | Preservar teclas da pausa; limpar; prioridade local do host | **Confirmada:** limpar na migração e aplicar mesmas regras ao host | Evita teclas acumuladas e privilégios criados pelo código. Resta a diferença natural de rede. |
-| D13 | Parâmetros definitivos; ajustar com medições | **Confirmada:** parâmetros configuráveis e testes | Medir tecla até movimento distingue espera de tick, fila e rede. |
+| D06 | Esperar host / validar na tecla | Validação local imediata | Comparar última direção aceita; host revalida |
+| D07 | Fila longa / um / dois | Dois pendentes totais | Antecipação sem acúmulo de comandos antigos |
+| D08 | Contador separado / tamanho | Tamanho da estrutura | Evita divergência; aceitação não libera espaço |
+| D09 | Cliente fixa ciclo / host reserva | Referência do cliente e reserva do host | Uma curva por jogador/ciclo, ordem explícita |
+| D10 | Referência menor sempre inválida / validade 2 / 3 | Vence ao atingir três ciclos | Acomoda duas curvas com a mesma referência |
+| D11 | Descartar só inválido / manter resto / limpar | Limpar sequência comprometida | Evita curva dependente da descartada |
+| D12 | Reaproveitar pausa / limpar; privilégio do host | Limpar na migração; mesmas regras ao host | Sem teclas acumuladas ou prioridade criada pelo código |
+| D13 | Parâmetros fixos / medições | Configuráveis e testes | Distinguir atraso de rede, tick e fila |
 
-Referência 42 permite executar em 43 e 44. No 45, o comando venceu. Três ciclos são validade máxima, não espera.
+Referência 42 permite execução em 43/44, não 45. Validade não é espera. Versão de fila e ACK implementam a limpeza. Registros recuperáveis não são teclas pendentes. Fila cheia ignora a nova tecla. Host mantém apenas a vantagem natural de rede.
 
-A especificação usa versões de fila e ACK de limpeza. São mecanismos para cumprir D11; seus nomes de campos são escolhas técnicas iniciais.
+## 3. Motor e histórico — confirmadas
 
-## 4. Motor e histórico
-
-| ID | Alternativas consideradas | Decisão e situação | Motivo e consequência |
+| ID | Alternativas | Escolha | Motivo/efeito |
 |---|---|---|---|
-| D14 | Atualizar uma moto por vez; calcular destinos juntos | **Confirmada:** transição simultânea | Ordem de processamento não favorece jogador. As regras esportivas vêm do enunciado. |
-| D15 | Recuperar pelas teclas; pelos registros de resultados | **Confirmada:** registros de ciclos e controles | Teclas não informam o que chegou e foi aplicado. |
-| D16 | Confirmar só no fim; durante o jogo | **Confirmada:** confirmar registros durante a partida por maioria | Permite recuperar uma falha anterior ao fim. Armazenamento, confirmação e aplicação são distintos. |
-| D17 | ACK isolado; prefixo cumulativo | **Confirmada:** confirmar N exige todos até N | Impede histórico com lacunas. Registro ausente é solicitado. |
-| D18 | Memória; persistência em disco | **Confirmada:** estado e histórico em memória | Escopo menor. A versão inicial não aceita retorno de processo reiniciado. |
+| D14 | Mover uma por vez / destinos juntos | Transição simultânea | Ordem dos jogadores não favorece ninguém |
+| D15 | Recuperar teclas / registros | Registros de resultados e controles | Tecla não informa se chegou ou executou |
+| D16 | Confirmar no fim / durante o jogo | Registros confirmados por maioria | Recuperação antes do término; separar armazenamento, commit e aplicação |
+| D17 | ACK isolado / prefixo cumulativo | Confirmar N exige todos até N | Sem lacunas |
+| D18 | Memória / disco | Memória | Escopo menor; versão inicial não aceita processo reiniciado |
 
-Posição no histórico é global. Um registro pode conter movimentos de vários jogadores ou uma mudança de votantes. Não se confunde com a sequência de teclas de cada jogador.
+Posição é global e pode conter controles sem movimento; sequência de teclas é individual.
 
-## 5. Eleição e recuperação
+## 4. Eleição e recuperação — confirmadas
 
-| ID | Alternativas consideradas | Decisão e situação | Motivo e consequência |
+| ID | Alternativas | Escolha | Motivo/efeito |
 |---|---|---|---|
-| D19 | Sucessor assumir sozinho; pedir votos | **Confirmada:** fila de sucessão, histórico elegível e maioria | Ranking é preferência, não autorização. O preferencial se atualiza ou outro tenta. |
-| D20 | Histórico estritamente melhor; igual também elegível | **Confirmada:** igualdade permite voto | Cópias idênticas não devem bloquear a eleição. Compara-se época do último registro e depois posição. |
-| D21 | Mais de um voto; voto único por época | **Confirmada:** um voto por participante por época | Impede autorizações conflitantes na mesma tentativa. Guardar voto antes de responder. |
-| D22 | Assumir após timeout; usar épocas e identidade | **Confirmada:** época distingue lideranças | Timeout suspeita; mensagem antiga não recupera autoridade. |
-| D23 | Repetir indefinidamente; reduzir quorum; limitar tentativas | **Confirmada:** próximos candidatos e prazo total | Sem maioria suficiente, encerrar de forma controlada. Não inventar uma lista menor. |
-| D24 | Apagar pendentes; impor matriz local; reconciliar logs | **Confirmada:** preservar confirmados e resolver provisórios | Uma confirmação pode ter sido anunciada parcialmente. |
-| D25 | Escolher conflito confirmado por maioria; parar | **Confirmada:** verificar e abortar se o conflito for real | Um trecho confirmado não deve ser sobrescrito. É violação de segurança, não votação sobre a verdade. |
-| D26 | Retomar ao eleger; recuperar antes | **Confirmada:** eleição, recuperação, sincronização e contagem | Evita apresentar curva recuperada inesperadamente depois da retomada. |
-| D27 | Contagem + janela extra; uma contagem com janela no final | **Confirmada final:** três segundos totais, entrada só nos últimos 500 ms | Elimina a ambiguidade de seis segundos. As filas antigas são limpas antes; as novas teclas são preservadas. |
+| D19 | Sucessor assume / pede votos | Ranking + histórico elegível + maioria | Preferencial se atualiza ou outro tenta |
+| D20 | Estritamente melhor / igualdade | Igualdade permite voto | Cópias idênticas não bloqueiam eleição; comparar época do último registro e posição |
+| D21 | Múltiplos / um voto | Um por época | Guardar antes de responder |
+| D22 | Timeout autoriza / época e identidade | Época distingue liderança | Silêncio suspeita; host antigo não recupera autoridade |
+| D23 | Espera infinita / reduzir quorum / limitar | Próximos candidatos e prazo total | Sem progresso, encerrar; não inventar lista menor |
+| D24 | Apagar / impor matriz local / reconciliar | Preservar confirmados e resolver provisórios | Confirmação pode ter anúncio parcial |
+| D25 | Maioria escolhe conflito confirmado / parar | Verificar e abortar se real | Não sobrescrever confirmação |
+| D26 | Retomar ao eleger / recuperar antes | Eleição → recuperação → sincronização → contagem | Estado recuperado aparece durante pausa |
+| D27 | Contagem + janela extra / janela no final | 3 s totais, entrada nos últimos 500 ms | Sem seis segundos; limpar antes e preservar novas teclas |
 
-As regras preventivas aprovadas são: voto único, comparação de histórico, quorum da configuração correta, correspondência de prefixos, ACK após armazenamento, confirmação na época atual, imutabilidade e aplicação única.
+Prevenções aceitas: voto único, frescor, configuração correta, prefixos, ACK após armazenamento, confirmação na época atual, imutabilidade e aplicação única. EPOCH_START confirma o prefixo recuperado pelo contrato de replicação; não basta anunciar liderança.
 
-O registro de estabelecimento da nova liderança permite confirmar o prefixo recuperado. Seu detalhamento usa o contrato de replicação; não é apenas uma mensagem dizendo “sou o líder”.
+## 5. Votantes e saída — confirmadas
 
-## 6. Votantes, atividade e saída
-
-| ID | Alternativas consideradas | Decisão e situação | Motivo e consequência |
+| ID | Alternativas | Escolha | Motivo/efeito |
 |---|---|---|---|
-| D28 | Votantes fixos; decisão confirmada; recálculo local | **Confirmada:** composição alterada pelo histórico | Saídas não podem criar maiorias incompatíveis. |
-| D29 | Mudança direta; fase conjunta | **Confirmada:** conjunta, depois definitiva | A entrada, decisões intermediárias e finalização exigem maiorias antiga e nova. Nova simples só após final confirmado. |
-| D30 | Eliminado desconecta; espectador; escolha de saída | **Confirmada:** pode assistir ou sair com segurança | Moto eliminada e processo votante são condições diferentes. Host morto no jogo pode coordenar. |
-| D31 | Fechar imediatamente; transferência e remoção | **Confirmada:** aguardar aprovação | Evita perder informação. Se o host cair no meio, segue recuperação. |
-| D32 | Só TCP; só teclas; atividade explícita | **Confirmada:** mensagem pequena após três intervalos sem comandos | Inatividade no teclado não é desconexão; TCP pode demorar a detectar falhas. |
-| D33 | Esperas até tick; resposta imediata | **Confirmada:** reduzir esperas artificiais | ACK e anúncio de confirmação não aguardam o próximo tick. |
+| D28 | Fixos / alteração confirmada / recálculo local | Alteração pelo histórico | Impede maiorias incompatíveis |
+| D29 | Direta / conjunta | Conjunta e definitiva pelas duas maiorias | Nova simples só após final confirmado |
+| D30 | Morto desconecta / assiste / escolhe | Pode assistir ou sair com segurança | Moto e processo votante são independentes |
+| D31 | Fechar / esperar transferência e remoção | Aguardar aprovação | Falha no meio usa recuperação |
+| D32 | Só TCP / só teclas / heartbeat | Atividade após três intervalos sem comandos | Silêncio no teclado não é falha; TCP pode demorar |
+| D33 | Esperar tick / responder imediatamente | ACK e anúncio imediatos | Reduz espera artificial |
 
-Na fase conjunta, decisões usam as duas listas. Ao armazenar a transição, a versão inicial usa a exigência conjunta conservadora também para votar. Essa é uma escolha técnica da especificação para não relaxar quorum por falta de anúncio.
+Ao armazenar a conjunta, a versão inicial usa sua restrição conservadora para votar; é detalhe técnico para não relaxar quorum sem anúncio. Host eliminado pode coordenar e, após abdicar, não reassume sozinho.
 
-## 7. Lobby e encerramento
+## 6. Lobby e encerramento
 
-| ID | Alternativas consideradas | Decisão e situação | Motivo e consequência |
+Todas confirmadas, exceto D41, **base inicial**.
+
+| ID | Alternativas | Escolha | Motivo/efeito |
 |---|---|---|---|
-| D34 | Início automático; criador solicita | **Confirmada:** criador inicia com três ou quatro | Permite esperar pelo quarto ou jogar com três. |
-| D35 | Entrada durante preparação; congelar tentativa | **Confirmada:** lista congelada | RTT, conexões, ranking e spawns usam o mesmo conjunto. |
-| D36 | Botão pronto; sem confirmação; pronto automático | **Confirmada:** READY automático e aguardar todos | Sem ação extra do usuário, mas com verificação de preparação. |
-| D37 | Começar com restantes; cancelar se alguém cair | **Confirmada:** cancelar antes do início e manter PREPARANDO | Mesmo com três, o criador solicita nova tentativa. |
-| D38 | Resultados individuais na rede; resultado global | **Confirmada:** resultado global | Todos conhecem a mesma decisão; aplicativo mostra a situação individual. |
-| D39 | Fechar ao enviar; maioria de entrega; todos | **Confirmada:** todos ainda integrantes confirmam entrega | Maioria confirma a decisão; todos confirmam recebimento antes do fechamento normal. Timeout não é ACK. |
-| D40 | Lobby obrigatório; sair automático; escolha | **Confirmada:** lobby ou sair, opcional | A indisponibilidade do lobby não muda o resultado. |
-| D41 | Documentos imutáveis; base revisável | **Base inicial:** estados e modelos de mensagens podem evoluir | A equipe aceitou uma proposta inicial de formatos e ajustes posteriores. |
+| D34 | Automático / criador inicia | Criador com três/quatro | Pode esperar pelo quarto |
+| D35 | Entradas durante preparação / congelar | Congelar tentativa | RTT, conexões e spawns usam mesmo conjunto |
+| D36 | Botão / sem ACK / automático | READY automático, todos | Sem ação extra, com verificação |
+| D37 | Começar com restantes / cancelar | Cancelar e manter PREPARANDO | Criador pede outra tentativa mesmo com três |
+| D38 | Resultados individuais / global | Global | Aplicativo deriva resultado individual |
+| D39 | Fechar ao enviar / maioria / todos | Todos da sessão confirmam entrega | Maioria decide; todos recebem no fechamento normal |
+| D40 | Lobby obrigatório / sair / escolha | Lobby ou saída opcionais | Lobby ausente não altera resultado |
+| D41 | Contrato imutável / revisar | Estados e modelos revisáveis | Atualizar documentos, código e testes juntos |
 
-## 8. Detalhes técnicos preenchidos na versão 1
+Timeout não é ACK. Eliminações anteriores não passam a empatar com os finalistas. Saída normal aguarda autorização; para receber novos jogadores, reabrir a sala; controle passa ao presente mais antigo se o criador sair.
 
-Estes itens tornam o contrato implementável. São escolhas técnicas iniciais, não novas falas atribuídas ao grupo:
+## 7. Escolhas técnicas iniciais da especificação
 
-- SHA-256 e JSON canônico para identificar registros e snapshots.
-- Envelope com IDs por conexão e correlação de respostas.
-- Tipos e nomes de mensagens completos em protocolo.md.
-- Padrão de 8 ciclos/s, timeouts e limites de buffers.
-- Arena 40×30 e pontos de partida afastados das bordas.
-- Cinco amostras de RTT por destino.
-- Laço de sessão como único dono dos dados.
-- Sem adição de jogadores ou reentrada durante partida.
-- Eventos de saída aplicados entre movimentos, sem deslocar os demais.
-- Registro START define o início lógico para mensagens atrasadas.
-- Atualização de README para distinguir contrato de código implementado.
+Sem atribuí-las como novas falas do grupo:
+- SHA-256, JSON canônico, IDs/correlação de mensagens.
+- Modelos completos em protocolo.md, limite de buffers e timeouts.
+- 8 ciclos/s, arena 40×30, spawns afastados e cinco amostras RTT/destino.
+- Um laço dono dos dados; sem adição/reentrada durante partida.
+- Saída entre movimentos sem deslocar demais; START como início lógico.
+- Configuração aplicada distinta da conservadora; versões identificam transições.
+- Comandos de execução documentados como interface a construir.
 
-Os valores são calibráveis pelos testes. Alterações de campos incompatíveis exigem revisão do contrato.
+Calibrar valores em testes. Mudança incompatível de campos revisa o contrato.
 
-## 9. Limites que precisam ser apresentados
+## 8. Limites, revisões e manutenção
 
-A escolha por maioria implica um limite: dois votantes precisam de ambos. Se um falhar, não há quorum para confirmar vitória, remoção ou novo líder.
+Com dois votantes, perder um impede quorum. Não há continuidade sob qualquer sequência de falhas; demonstrar o limite frente ao enunciado. Não contornar contando apenas quem responde. Não há resistência a fraude, recuperação de processo sem memória ou entrega a máquinas desaparecidas.
 
-A documentação não afirma continuidade sob qualquer sequência de falhas. Esse cenário precisa ser demonstrado e avaliado frente ao requisito de continuidade de jogador comum. Não esconder essa limitação nem “resolvê-la” contando apenas quem responde.
+Revisões encerradas: RTT ao lobby → entre pares; idade 2 → 3; dúvida Raft → protocolo específico; prontidão → automática; duas fases de 3 s → uma com 500 ms finais; entrega final → todos; eleição genérica → regras de época, frescor, voto e prazo.
 
-Também não há prova de resistência a fraude, retorno de processo sem memória ou entrega de resultado a máquinas que desapareceram.
-
-## 10. Revisões encerradas
-
-| Assunto | Proposta anterior | Regra vigente |
-|---|---|---|
-| RTT | Medir só até o lobby | Medir entre jogadores |
-| Validade | Reduzir para dois ciclos | Vence ao atingir três |
-| Algoritmo | Dúvida sobre Raft completo | Protocolo específico |
-| Prontidão | Etapa potencialmente manual | Automática |
-| Retomada | Possíveis três segundos + três extras | Três segundos, últimos 500 ms aceitam teclas |
-| Confirmação final | Prazo sem entrega de todos | Todos da sessão no encerramento normal |
-| Eleição | Critérios ainda genéricos | Época, posição, igualdade, voto único e prazo definidos |
-
-## 11. Como alterar uma decisão
-
-Referenciar o ID, indicar regra antiga e nova, explicar o motivo, atualizar protocolo/arquitetura e acrescentar os testes afetados.
-
-Questões de formato e implementação podem ser resolvidas pela proposta inicial autorizada. Mudanças de comportamento, como relaxar quorum, permitir reentrada ou alterar a janela de teclado, precisam ser registradas como revisão real.
-
-O trabalho restante é implementar, executar os cenários e ajustar os valores com evidências. Não confundir ter um documento detalhado com ter validado o programa.
+Para revisar: referenciar ID, registrar regra antiga/nova e motivo, atualizar arquitetura/protocolo e testes. Formatos podem seguir a proposta inicial autorizada; relaxar quorum, permitir reentrada ou alterar janela é mudança real de comportamento. Documentação detalhada não equivale a programa validado.
