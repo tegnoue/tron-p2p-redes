@@ -1,217 +1,122 @@
-# Camada de comunicação
+# Comunicação TCP
 
-Esta implementação fornece o transporte entre processos: conexões TCP, mensagens JSON completas, filas de envio, recebimento independente do teclado e conexão entre pares. Os arquivos estão completos e podem ser executados juntos.
+Esta versão usa funções para JSON, configuração simples e duas classes pequenas. Connection representa um socket; NodeClient reúne as conexões de um jogador. O servidor de diagnóstico e o cliente podem ser executados juntos.
 
-Registro de jogadores, salas, colisões, histórico de jogo, votação e heartbeat da partida são regras de aplicação. Não estão implementados pelos programas de diagnóstico. O servidor de diagnóstico apenas devolve mensagens; ele não é um lobby funcional de salas.
+## O que cada arquivo faz
 
-## 1. Arquivos e responsabilidades
-
-| Arquivo | Função |
+| Arquivo | Responsabilidade |
 |---|---|
-| src/core/config.py | Configuração por ambiente/.env e limites locais |
-| src/core/exceptions.py | Erros que a sessão pode capturar |
-| src/core/protocol.py | JSON, LF, buffer, envelope e leitura de mensagens |
-| src/core/transport.py | Escuta TCP e threads de leitura/escrita por conexão |
-| src/lobby/server.py | Transporte do lobby e fila de eventos dos clientes |
-| src/node/client.py | Conexão ao lobby, porta P2P e malha |
-| src/lobby/__main__.py | Permite python -m src.lobby |
-| src/node/__main__.py | Permite python -m src.node |
-| tests/test_communication.py | Testes de enquadramento e rede real em loopback |
+| core/config.py | Endereços por ambiente/.env e limites locais |
+| core/protocol.py | Codificar, enviar, receber e validar JSON |
+| core/transport.py | Connection e função listen |
+| lobby/server.py | Aceitar clientes e processar seus eventos |
+| node/client.py | Conectar ao lobby e montar a malha P2P |
+| tests/test_communication.py | Testes de mensagens e sockets |
 
-src/node/host.py não precisa receber código de rede: o host utiliza NodeClient como qualquer outro jogador. src/lobby/session.py recebe as regras de registro/salas da equipe responsável. Os identificadores connection-1, connection-2 do LobbyServer identificam sockets, não jogadores registrados.
+Registro, salas, movimentos e eleições não são implementados por esta camada. O servidor executável responde ECHO para verificar o transporte; TEXT/ECHO são mensagens de diagnóstico.
 
-## 2. Executar
+## Executar
 
-O projeto exige Python 3.14 ou superior conforme seu pyproject.toml. A implementação utiliza recursos disponíveis também em 3.12; os testes locais foram executados em Python 3.12.14. A execução em 3.14 deve ser confirmada no ambiente da equipe.
-
-Na raiz do repositório:
-
+Na raiz do projeto:
 ~~~bash
 poetry install --no-root
-~~~
-
-A opção --no-root instala as dependências sem tentar empacotar o projeto. A execução abaixo usa os módulos src diretamente.
-
-Copiar .env.example para .env é opcional. Argumentos de linha de comando substituem os valores de ambiente. No Windows, a cópia pode ser feita com Copy-Item; em Linux/macOS, com cp.
-
-### Teste do lobby
-
-Primeiro terminal:
-~~~bash
 poetry run python -m src.lobby
 ~~~
 
-Segundo terminal:
+Em outro terminal:
 ~~~bash
 poetry run python -m src.node --id A --peer-port 6001
 ~~~
 
-Terceiro terminal:
-~~~bash
-poetry run python -m src.node --id B --peer-port 6002
-~~~
-
-No terminal de A ou B:
+No cliente:
 ~~~text
-/lobby Olá, lobby!
+/lobby Olá!
+/quit
 ~~~
 
-O servidor deve devolver ECHO com o mesmo payload. É uma mensagem de diagnóstico, não uma operação de sala. O recebimento acontece mesmo quando o teclado está parado. /quit encerra o processo; Ctrl+C também é aceito.
+O servidor deve devolver o texto. Outro cliente pode conectar em uma porta P2P diferente. O recebimento continua mesmo enquanto o teclado está parado.
 
-### Teste P2P sem lobby
+O pyproject exige Python 3.14. Os testes desta alteração foram executados em Python 3.12.14; a equipe deve confirmar também em 3.14.
 
-Os dois terminais devem iniciar dentro do prazo MESH_TIMEOUT, cujo padrão é 15 s. Se o prazo acabar, reiniciar o teste ou aumentar esse valor.
+## Testar dois pares sem lobby
 
-Terminal A:
+Iniciar ambos dentro de 15 segundos:
+
 ~~~bash
 poetry run python -m src.node --id A --peer-port 6001 --no-lobby --peer B=127.0.0.1:6002
 ~~~
 
-Terminal B:
 ~~~bash
 poetry run python -m src.node --id B --peer-port 6002 --no-lobby --peer A=127.0.0.1:6001
 ~~~
 
-Após o evento connected:
-~~~text
-/to B Mensagem de A para B
-~~~
+Após connected, A pode digitar /to B Olá e B pode digitar /to A Resposta. /all texto envia a todos os pares conectados, sem incluir o lobby.
 
-Em B:
-~~~text
-/to A Resposta de B
-~~~
+Para três ou quatro jogadores, cada comando deve incluir --peer para todos os outros. O menor ID de cada par inicia a conexão. Todos escutam; o handshake verifica identidade e contexto da partida.
 
-O comando /all envia aos pares conectados, sem incluir o lobby.
+Em máquinas distintas, os endereços precisam ser IPs reais alcançáveis. O servidor pode usar --host 0.0.0.0 para ouvir na rede. O jogador pode usar --bind-host 0.0.0.0; esse endereço de escuta não deve ser anunciado aos outros.
 
-Para três ou quatro jogadores, cada linha deve incluir --peer para todos os outros. Por exemplo, A conhece B, C e D; B conhece A, C e D. Somente o menor ID de cada par inicia a conexão. A escuta ocorre em todos os jogadores.
+## Como o código funciona
 
-### Máquinas diferentes
+encode_message transforma um dicionário em JSON UTF-8 e acrescenta LF. send_message envia esses bytes.
 
-LOBBY_HOST deve indicar a máquina do servidor. Cada --peer deve usar o IP real do respectivo jogador. PEER_BIND_HOST pode ser 0.0.0.0; PEER_ADVERTISE_HOST precisa ser um endereço alcançável pelas outras máquinas. As portas precisam estar acessíveis na rede local.
+receive_message acumula bytes até LF, separa a primeira mensagem e devolve o restante do buffer. O buffer deve ser reutilizado. Fechamento sem pendências devolve None; fechamento no meio de uma mensagem gera erro. Um timeout de leitura não descarta os bytes já acumulados.
 
-NodeClient.advertised_endpoint fornece host anunciado e a porta real da escuta, inclusive quando a porta 0 foi usada para alocação automática em testes.
+Connection mantém esse buffer e uma thread de leitura. Quando recebe mensagem, chama um callback, isto é, uma função fornecida por quem criou a conexão. O aplicativo do jogador usa o callback para colocar a mensagem em uma queue.Queue.
 
-## 3. Caminho de uma mensagem
+O envio é síncrono, com lock para impedir que duas threads misturem bytes. Não há fila de envio nem thread de escrita. Um destino lento pode bloquear a chamada por até SEND_TIMEOUT, cujo padrão é um segundo; depois o erro fecha a conexão. Essa escolha simplifica a implementação e deve ser considerada na taxa de ciclos do jogo.
 
-NodeClient.send cria o envelope e enfileira bytes. A thread de escrita faz sendall. A thread de leitura acumula bytes até LF, valida o JSON e o envelope e gera NetworkEvent. A sessão obtém esse evento por get_event.
+listen aceita sockets em segundo plano. Cada preparação ocorre numa thread para que um handshake lento não impeça aceitar outro jogador.
 
-Cada conexão tem um MessageReader. Seu buffer é um atributo do objeto, preservado entre leituras e até quando recv gera timeout. Assim, uma mensagem parcial não é esquecida.
-
-Há somente uma thread lendo e uma escrevendo em cada socket. Vários produtores podem chamar send sem intercalar bytes ou repetir IDs. As threads não alteram o estado do jogo.
-
-O limite físico inclui LF. A fila possui limite de quantidade e bytes. Se o destino não acompanha os envios, a conexão fecha e a aplicação recebe erro de fila cheia; não há descarte silencioso de registros.
-
-O evento connected informa que a conexão está disponível. message contém um objeto Python. disconnected informa fechamento normal ou erro. error pode indicar falha do listener, handshake ou prazo de conexão da malha.
-
-## 4. Interface para o restante do projeto
-
-Exemplo mínimo de consumidor:
+## Uso pelo jogo
 
 ~~~python
-import queue
 from src.node.client import NodeClient
 
-node = NodeClient("A")
+node = NodeClient("A", peer_port=6001, match_id="m1", attempt_id="a1")
 node.start()
-
-try:
-    node.connect_lobby()
-    node.send("lobby", "TEXT", {"text": "teste"})
-
-    while True:
-        try:
-            event = node.get_event(timeout=0.1)
-        except queue.Empty:
-            continue
-
-        if event.kind == "message":
-            print(event.peer_id, event.message)
-        elif event.kind == "disconnected":
-            print("Conexão encerrada:", event.peer_id, event.error)
-finally:
-    node.close()
+node.connect_lobby()
+node.connect_mesh({"B": ("192.168.1.20", 6002)})
 ~~~
 
-A sessão do jogo deve consumir os eventos e decidir seu efeito. O recebimento não espera input e não exige que o cliente tenha enviado uma solicitação primeiro.
+Os IDs e endpoints reais devem vir da preparação feita pelo lobby. O valor padrão demo serve apenas aos testes manuais.
 
-### Registro e identidade
-
-Antes de receber o player_id do lobby, a aplicação pode usar uma identidade temporária e enviar:
+A aplicação deve consumir get_event, que devolve um dicionário:
 
 ~~~python
-request_id = node.send(
-    "lobby",
-    "REGISTER",
-    {"nickname": "Ana", "peer_endpoint": node.advertised_endpoint},
-    anonymous=True,
-)
+event = node.get_event(timeout=0.1)
+
+if event["kind"] == "message":
+    message = event["message"]
+    print(event["peer_id"], message)
+elif event["kind"] == "disconnected":
+    print(event["peer_id"], event["error"])
 ~~~
 
-Quando a aplicação receber REGISTER_OK, deve chamar set_player_id com o ID atribuído. Isso só é permitido antes de conectar pares. O transporte não implementa a decisão de registro.
+queue.Empty significa que não chegou evento no prazo. Os tipos são connected, message, disconnected e error. O evento deve ser tratado pela sessão; a thread de rede não deve alterar a arena.
 
-Depois de receber a lista oficial:
-~~~python
-node.set_peers({
-    "B": ("192.168.1.20", 6002),
-    "C": ("192.168.1.21", 6003),
-})
-node.connect_mesh()
-~~~
+send(peer_id, tipo, payload) cria o envelope, envia e devolve o ID da mensagem. broadcast envia a todos os pares e informa falhas por eventos. A sessão deve atualizar epoch conforme sua eleição e decidir o significado de cada payload.
 
-A aplicação deve criar NodeClient com match_id e attempt_id recebidos da preparação, em vez dos valores "demo" usados pelo diagnóstico. O handshake verifica contexto, identidade conhecida e regra do iniciador; não usa autenticação criptográfica.
+Antes do registro, send("lobby", "REGISTER", payload, anonymous=True) usa sender_id=null. Após REGISTER_OK, a aplicação atribui o ID recebido a node.player_id antes de conectar os pares. O endpoint anunciado combina PEER_ADVERTISE_HOST com a porta real de node.server.getsockname().
 
-### Envio e contexto
+disconnect(peer_id) fecha o socket e retira seu endpoint conhecido. Essa operação deve ocorrer por decisão da sessão; não modifica os votantes automaticamente. close encerra todas as conexões. Como send é síncrono, não há flush de fila local.
 
-- send(peer_id, tipo, payload) envia a um destino e devolve o ID da mensagem.
-- send("lobby", ...) usa contexto de lobby.
-- broadcast(tipo, payload) envia aos pares e devolve um mapa de falhas.
-- epoch representa a época corrente informada pela sessão. O transporte não inicia eleição nem decide se uma época maior é válida.
-- LobbyServer.send permite reply_to, match_id e attempt_id para respostas/notificações.
-- get_event devolve o próximo evento; queue.Empty significa que não chegou evento no prazo.
+## Configuração e falhas
 
-Cada conexão possui IDs crescentes. A aplicação deve tratar correlação, repetição de operações e validade dos tipos/payloads específicos. A validação de envelope não implementa todas as regras do protocolo do jogo.
+.env.example contém host/port do lobby, bind/endereço anunciado e porta do jogador. CLI tem precedência. Timeouts e limite de mensagem são constantes explícitas em config.py.
 
-### Falha e fechamento
+O transporte informa fechamento, erro de socket, JSON inválido ou falha de handshake. Silêncio no teclado não prova desconexão. Heartbeat, prazo sem atividade, duplicatas de operações e regras de época pertencem à sessão do jogo.
 
-last_received_at(peer_id) permite consultar o instante monotônico de última mensagem válida. O transporte reporta erros do TCP; a sessão deve implementar heartbeat e suspeita por falta de atividade. Silêncio no teclado não é desconexão.
+A fila de eventos não tem limite; a aplicação deve consumi-la regularmente. Não há autenticação criptográfica, retorno de processo reiniciado ou reconexão automática depois de encerrada a sessão.
 
-disconnect(peer_id, forget=True) fecha e remove o endpoint conhecido. Deve ser usado depois de uma decisão da sessão; isso não altera automaticamente os votantes.
+Esta versão substitui as classes NetworkConfig, JsonConnection, TcpListener e NetworkEvent da implementação anterior. Os eventos agora são dicionários e o envio é direto. Os módulos da equipe devem utilizar a interface descrita nesta página.
 
-flush espera a escrita local das mensagens enfileiradas. Não significa que o receptor confirmou sua aplicação. close cancela a comunicação e descarta pendências; na saída normal, a aplicação deve concluir seu protocolo, fazer flush e então fechar.
-
-O fechamento do lobby remove somente essa conexão. A malha P2P continua disponível.
-
-## 5. Configuração e limites
-
-.env.example lista os valores utilizados. Timeouts de conexão limitam o estabelecimento/handshake. IO_TIMEOUT permite verificar fechamento entre leituras e limita uma escrita bloqueada. MESH_TIMEOUT limita tentativas de conexão dos pares.
-
-MAX_MESSAGE_BYTES limita uma linha; MAX_PENDING_MESSAGES limita mensagens em envio; MAX_PENDING_BYTES limita os bytes pendentes. A fila de eventos da aplicação é uma queue.Queue sem limite: o consumidor deve drená-la regularmente. Um jogo que deixe de consumir eventos pode acumular memória.
-
-Os IDs e endpoints de diagnóstico não substituem a configuração oficial fornecida pelo lobby. Não há reconexão automática de uma sessão encerrada nem reentrada de jogador; essas políticas pertencem à aplicação.
-
-## 6. Verificação
+## Testes
 
 ~~~bash
 poetry run python -m unittest -v
 ~~~
 
-Os testes cobrem:
-- Unicode, fragmentação e várias mensagens na mesma leitura;
-- bytes parciais preservados após timeout;
-- fechamento normal/incompleto;
-- JSON inválido, chave duplicada, números não finitos e limite;
-- três clientes no lobby e recebimento espontâneo;
-- quatro nós em malha e mensagens nos dois sentidos;
-- queda do lobby sem derrubar os pares;
-- handshake inválido ou contexto errado;
-- IDs sequenciais com envios concorrentes;
-- fila cheia com erro explícito e desconexão única.
+Os testes verificam mensagens fragmentadas/agrupadas, Unicode, timeout parcial, fechamento, JSON inválido, envelope, limite, clientes simultâneos, recebimento espontâneo, malha de quatro nós, queda do lobby e envios concorrentes.
 
-Os testes de rede utilizam sockets TCP reais em loopback. Eles não substituem a execução entre máquinas distintas, nem validam eleição, quorum ou regras do jogo.
-
-## 7. Ordem para estudar o código
-
-protocol.py mostra texto, bytes, delimitador e buffer. transport.py mostra como leitura e escrita deixam de bloquear o programa principal. server.py mostra o atendimento simultâneo; client.py acrescenta identificação e montagem da malha. Os testes demonstram os limites de cada comportamento.
-
-A separação permite ao motor ignorar sockets: ele recebe comandos da sessão e devolve resultados. A sessão decide o que enviar e como tratar eventos de rede.
+A execução usa sockets reais em loopback. A integração entre máquinas e os algoritmos do jogo precisam de testes próprios.
